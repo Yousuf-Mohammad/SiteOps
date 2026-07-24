@@ -191,7 +191,7 @@ no outbox event. Exposed and closed **risk 15**: decision uniqueness moved to
 
 ---
 
-## Phase 11 — Frontend: list
+## Phase 11 — Frontend: list — ✅ DONE
 🎯 Claims list matches house style.
 ✏️ Add `claims` to `queryKeys`; rebuild `app/claims/page.tsx` on `lib/api/client` + React Query (`keepPreviousData`), status + FY filters, pager. Retire `lib/api.ts` usage here.
 ✅ **Gate:** list paginates + filters against the API; no use of the old client; loading/error states render.
