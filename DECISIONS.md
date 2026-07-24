@@ -92,6 +92,51 @@ golden #2 that actually fails, at `$7.875` against a required `$7.25`.
 
 ---
 
+## Phase 2 — FY & effective-dated levy rate (`claim-fy.ts`)
+
+Closes risk-log rows 6 and 7. New files: `api/src/claims/claim-fy.ts` + `claim-fy.spec.ts`. Still pure —
+no Prisma, no Nest, no clock. `claims.service.ts` remains untouched until Phase 4.
+
+**FY comes from the expense date, never `now()`.** The starter used `new Date().getFullYear()`
+(bug 2), so the same claim would be stamped differently depending on when it happened to be created — and
+an expense dated `2026-08-01` got `26` when it belongs to FY27. References have to be reproducible, so the
+FY is a function of the expense date alone. FY runs 1 Jul – 30 Jun and is named for the year it *ends*:
+`month >= July → year + 1`, returned `% 100` for the two-digit `EXP 26-0042` format.
+
+**UTC accessors are load-bearing.** Expense dates are stored as UTC midnight (`seed.ts` uses date-only
+strings, and the DTO's `@IsDateString` converts the same way). Reading them with `getMonth()`/`getFullYear()`
+shifts the day either side of Greenwich, and the FY boundary is exactly where that bites:
+`2026-07-01T00:00:00Z` reads as 30 June anywhere west of UTC, silently producing FY26 for an FY27 expense.
+This would never show up here — the dev host is UTC+6 and the container is UTC — so two tests pin it from
+opposite directions: one fails east of Greenwich on local getters, the other fails west.
+
+**`effectiveFrom` is inclusive**, so an expense dated exactly `2026-01-01` attracts the new 12.5%. That
+matches how the seed reads ("12.5% from 2026-01-01") and how a rate change would be announced in practice.
+
+**The resolver is order-independent.** It scans for the latest `effectiveFrom <= expenseDate` rather than
+assuming a sorted input, so correctness doesn't depend on Phase 4 remembering an `orderBy`. Ties on the same
+`effectiveFrom` resolve to the last one seen — the data model permits it, the seed never produces it.
+
+**A missing rate throws rather than defaulting to 0%.** An expense predating every configured rate is a
+configuration fault; charging no levy would understate the money with no signal at all. It throws a plain
+`Error` (not a Nest `HttpException`) so the module stays framework-free — Phase 4 maps it to a 400.
+
+**`SurchargeRate.ratePercent` stays `Float`** and is converted to `Decimal` at the boundary. `10` and `12.5`
+are both exactly representable in binary floating point, so no precision is lost, and nothing downstream
+does float arithmetic. Changing the column would be schema churn for no gain.
+
+Two tests wire Phases 1 and 2 together end to end: the seeded rates resolve `2026-01-18` to 12.5%, which
+feeds `computeTotals` to produce `67.47` — golden #1, and the stored total of seeded claim `EXP 26-0003`.
+The same lines dated `2025-12-31` resolve to 10% and total `65.97`, which is the reproducibility argument
+for snapshotting the rate in Phase 3 made concrete.
+
+**Test rigour.** Five mutants were introduced and all five were caught: local getters instead of UTC (1
+failure — only the UTC-boundary test, exactly as designed), the FY boundary off by a month (3), taking the
+first applicable rate instead of the latest (6), exclusive instead of inclusive `effectiveFrom` (2), and
+returning 0% instead of throwing (3).
+
+---
+
 ## Starter audit (Phase 0.5)
 
 Read-only pass over `api/src/claims/` and `api/prisma/schema.prisma`. No code changed in this phase.
