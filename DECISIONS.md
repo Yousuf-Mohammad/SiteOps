@@ -167,6 +167,74 @@ returning 0% instead of throwing (3).
 
 ---
 
+## Phase 12 — New-claim form, with a total that matches the server
+
+Closes risk-log row 14. Rebuilds `web/app/claims/new/page.tsx` on the house pattern
+(`web/app/dockets/new/page.tsx`): react-hook-form + zod, `useFieldArray` for the line list, a `useMutation`
+that invalidates `claims` and returns to the list. Retires `lib/api.ts` — the form was its last caller, so
+the file is deleted, completing the migration Phase 11 began.
+
+### The bug the golden examples exist to catch
+
+The starter form applied the levy **per line**, inside the loop:
+`amount += Math.round(amount * 0.125 * 100) / 100`. `3 × $19.99` fuel survives that by luck; `$1 + $1` fuel
+`+ $5` non-fuel does not — per line it rounds to `$1.13` twice and totals **$7.26**, where the levy applied
+once to the `$2` fuel subtotal is `$0.25` and the total is **$7.25**. That one cent is exactly what Golden #2
+is designed to expose. Verified live in the browser: the rebuilt preview reads `$7.25`.
+
+### The preview is a mirror of the server's `computeTotals`, not a re-implementation
+
+The preview must equal what the server stores. Reimplementing the arithmetic in float would drift on
+half-cent cases, so `web/lib/claim-totals.ts` is a **deliberate line-for-line copy** of
+`api/src/claims/claim-totals.ts` — same `decimal.js` clone, same half-up, same single rounding point — and
+`decimal.js` was added to `web` so the arithmetic is identical, not merely similar. The two packages don't
+share a build, so the duplication is unavoidable and is called out in the file header. A parity check runs
+both functions over the two goldens and a half-cent case and asserts identical output; if they ever diverge,
+that check fails. This is risk 14 handled by *elimination* (the numbers are provably the same), with the
+duplication as the acknowledged cost.
+
+### The one honest gap: the levy rate is hardcoded at 12.5%
+
+The server resolves the rate by expense date (10% before 2026-01-01, 12.5% on/after) from `SurchargeRate`,
+which **no endpoint exposes**. The preview hardcodes the current 12.5% rather than adding a rate-lookup
+endpoint — a deliberate choice to keep this phase web-only. **Consequence:** a fuel expense back-dated before
+2026-01-01 previews at 12.5% while the server stores 10%. Every present-day claim (today is FY26) and both
+goldens match exactly, and the server is always authoritative — the *created* claim is correct regardless,
+because the server recomputes; only the pre-submit preview can drift, and only for historical fuel dates.
+The alternatives were weighed: a `GET /claims/levy-rate?date=` endpoint would close the gap for all dates
+(reusing `resolveLevyRate`), and mirroring the rate *table* client-side would match until a rate changes
+server-side and the copy goes stale — the worst option, since it duplicates the most volatile thing. The
+bounded, documented gap was chosen over both.
+
+### Validation mirrors the DTO
+
+The zod schema restates `CreateClaimDto`/`ClaimLineDto`: project and expense date required, at least one line,
+description 1–500 chars, quantity a positive whole number (`@IsInt @IsPositive`), unit price positive with at
+most two decimals (`@IsNumber({maxDecimalPlaces:2})`). Verified live: submitting with no project, no date and
+blank descriptions surfaces inline messages and makes no network call; `1.005` is rejected before submit.
+
+---
+
+## Phase 11 — Claims list
+
+Rebuilds `web/app/claims/page.tsx` on the same house pattern as the dockets list: `useQuery` with
+`keepPreviousData`, a new `queryKeys.claims` entry, status + FY filters, a pager, and explicit
+loading/error/empty states — replacing a one-shot `useEffect` fetch on the old `lib/api.ts` client.
+
+Two small things worth recording. **`lib/api.ts` is retired across two phases, not one:** it had two callers
+(the list and the form), so Phase 11 moved the list and Phase 12 deleted the file once the form followed —
+deleting it in Phase 11 would have broken the form mid-series. And **the list surfaced a real CSS gap:**
+`PARTIALLY_APPROVED` is a valid status with no badge rule, so it was rendering on the flat grey base. One
+amber rule was added (matching `SUBMITTED`, its in-flight sibling) — the list is simply the first screen to
+display that status.
+
+Verified live in the browser (the Windows Docker bind mount silently serves a stale build on file change, so
+a `.next` clear + `web` restart is required before trusting the page, and the DOM is read rather than relying
+on HTTP 200): status filter narrows the list and the pager total tracks; FY 27 gives a clean empty state,
+FY 26 restores all rows; the `PARTIALLY_APPROVED` badge renders amber.
+
+---
+
 ## Phase 10 — The rejected-claims question
 
 The brief's one deliberately unanswered question (`ASSESSMENT-BRIEF.md:52`): an ops lead mentioned in passing

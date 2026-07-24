@@ -199,7 +199,7 @@ no outbox event. Exposed and closed **risk 15**: decision uniqueness moved to
 
 ---
 
-## Phase 12 — Frontend: new-claim form
+## Phase 12 — Frontend: new-claim form — ✅ DONE
 🎯 Create a claim with a live total that provably matches the server.
 ✏️ react-hook-form + zod; add/remove lines with a fuel flag; live preview importing/mirroring `computeTotals` (note any duplication in DECISIONS.md); on success the list updates without a full reload (invalidate `claims`).
 ✅ **Gate:** entering Golden #1 shows `$67.47` in the preview and the created claim's server total equals it; validation errors surface via zod.
