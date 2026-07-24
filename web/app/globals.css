@@ -87,6 +87,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .badge.DRAFT { background: #eef0f3; color: #66707d; }
 .badge.SUBMITTED { background: #fff4e0; color: #9a6a00; }
+.badge.PARTIALLY_APPROVED { background: #fff4e0; color: #9a6a00; }
 .badge.APPROVED { background: #e2f6e9; color: #1b7f3d; }
 .badge.REJECTED { background: #fdeaea; color: var(--danger); }
 .badge.ACTIVE { background: var(--accent-soft); color: var(--accent); }

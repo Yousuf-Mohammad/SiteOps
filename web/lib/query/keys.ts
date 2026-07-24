@@ -13,6 +13,12 @@ export const queryKeys = {
     list: (page: number, filters?: Record<string, string | undefined>) =>
       ['dockets', 'list', { page, ...filters }] as const,
   },
+  claims: {
+    all: ['claims'] as const,
+    list: (page: number, filters?: Record<string, string | undefined>) =>
+      ['claims', 'list', { page, ...filters }] as const,
+    detail: (id: string) => ['claims', 'detail', id] as const,
+  },
   notes: {
     forEntity: (entityType: string, entityId: string) => ['notes', entityType, entityId] as const,
   },
