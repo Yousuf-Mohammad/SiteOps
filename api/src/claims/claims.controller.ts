@@ -32,5 +32,15 @@ export class ClaimsController {
     return this.claims.submit((req as any).orgId, (req as any).user.id, id);
   }
 
-  // TODO: approve / reject / import
+  @Post(':id/approve')
+  approve(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.approve((req as any).orgId, (req as any).user.id, id);
+  }
+
+  @Post(':id/reject')
+  reject(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.reject((req as any).orgId, (req as any).user.id, id);
+  }
+
+  // TODO: import
 }

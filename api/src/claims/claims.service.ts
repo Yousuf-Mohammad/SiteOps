@@ -5,6 +5,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import Decimal from 'decimal.js';
 import { AuditService } from '../audit/audit.service';
 import { paginationMeta } from '../common/dto/pagination.dto';
 import { SequenceService } from '../common/sequence/sequence.service';
@@ -146,6 +148,149 @@ export class ClaimsService {
       return tx.claim.findFirstOrThrow({
         where: { id, orgId },
         include: { lines: true },
+      });
+    });
+  }
+
+  /** A second, different approver is required above this ex-GST total. */
+  private static readonly TWO_KEY_THRESHOLD = new Decimal('1000.00');
+
+  approve(orgId: string, actorId: string, id: string) {
+    return this.decide(orgId, actorId, id, 'APPROVE');
+  }
+
+  reject(orgId: string, actorId: string, id: string) {
+    return this.decide(orgId, actorId, id, 'REJECT');
+  }
+
+  /**
+   * Approve or reject, with two independent guarantees that are easy to
+   * conflate but do different jobs:
+   *
+   *  - `@@unique([claimId, actorId])` on ClaimDecision stops the *same person*
+   *    turning both keys. That is a correctness rule, and it is enforced by
+   *    Postgres rather than by a query the application could forget to run.
+   *  - The expected status inside the updateMany WHERE stops *two different
+   *    people* both winning the same transition. That is a concurrency rule.
+   *
+   * Neither substitutes for the other.
+   */
+  private async decide(orgId: string, actorId: string, id: string, action: 'APPROVE' | 'REJECT') {
+    return this.prisma.$transaction(async (tx) => {
+      const claim = await tx.claim.findFirst({
+        where: { id, orgId },
+        select: { status: true, submitterId: true, total: true, reference: true },
+      });
+      if (!claim) throw new NotFoundException(`Claim ${id} not found`);
+
+      // No self-dealing — not even as the second key. Checked explicitly and
+      // first so the error names the real reason instead of surfacing later as
+      // a confusing state conflict.
+      if (claim.submitterId === actorId) {
+        throw new ForbiddenException(
+          `You cannot ${action.toLowerCase()} a claim you submitted`,
+        );
+      }
+
+      // The brief says the two-key rule applies when the total *exceeds*
+      // $1,000.00 — exactly $1,000.00 is one key. Compared as Decimal; a float
+      // comparison here is precisely the kind of thing that works until it
+      // doesn't.
+      const needsTwoKeys = new Decimal(claim.total.toString()).greaterThan(
+        ClaimsService.TWO_KEY_THRESHOLD,
+      );
+
+      const fromStatuses =
+        action === 'REJECT' || needsTwoKeys ? ['SUBMITTED', 'PARTIALLY_APPROVED'] : ['SUBMITTED'];
+
+      if (!fromStatuses.includes(claim.status)) {
+        throw new ConflictException(
+          `Claim is ${claim.status}, expected ${fromStatuses.join(' or ')}`,
+        );
+      }
+
+      // A first key on a two-key claim parks it; everything else is terminal.
+      const nextStatus =
+        action === 'REJECT'
+          ? 'REJECTED'
+          : needsTwoKeys && claim.status === 'SUBMITTED'
+            ? 'PARTIALLY_APPROVED'
+            : 'APPROVED';
+
+      const isFinalApproval = nextStatus === 'APPROVED';
+
+      try {
+        await tx.claimDecision.create({ data: { claimId: id, actorId, decision: action } });
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002' // unique violation on (claimId, actorId)
+        ) {
+          throw new ConflictException('You have already recorded a decision on this claim');
+        }
+        throw err;
+      }
+
+      // Compare-and-swap on the *exact* status this decision was computed
+      // from. Matching a set of acceptable statuses instead would let two
+      // approvers racing on a SUBMITTED claim both succeed: the second would
+      // find PARTIALLY_APPROVED — which the first had just written — still
+      // inside the set, and overwrite it with the same value, burning a key
+      // without advancing the claim.
+      const updated = await tx.claim.updateMany({
+        where: { id, orgId, status: claim.status },
+        data: {
+          status: nextStatus,
+          // Denormalised "who finished it", only meaningful once final.
+          ...(isFinalApproval ? { approvedBy: actorId, approvedAt: new Date() } : {}),
+        },
+      });
+
+      if (updated.count === 0) {
+        // Someone else moved the claim between the read above and this write.
+        throw new ConflictException(
+          'Claim was decided concurrently by someone else; please retry',
+        );
+      }
+
+      const auditAction =
+        action === 'REJECT'
+          ? 'claim.rejected'
+          : nextStatus === 'PARTIALLY_APPROVED'
+            ? 'claim.partially_approved'
+            : 'claim.approved';
+
+      await this.audit.record(
+        {
+          orgId,
+          actorId,
+          action: auditAction,
+          entityType: 'claim',
+          entityId: id,
+          before: { status: claim.status },
+          after: { status: nextStatus },
+        },
+        tx as any,
+      );
+
+      // Only *final* approval is broadcast — that is the event the ledger and
+      // the burn dashboard consume. A first key is an internal step.
+      if (isFinalApproval) {
+        await this.outbox.enqueue(tx, {
+          orgId,
+          type: 'claim.approved',
+          payload: {
+            claimId: id,
+            reference: claim.reference,
+            total: claim.total.toString(),
+            approvedBy: actorId,
+          },
+        });
+      }
+
+      return tx.claim.findFirstOrThrow({
+        where: { id, orgId },
+        include: { lines: true, decisions: { orderBy: { createdAt: 'asc' } } },
       });
     });
   }

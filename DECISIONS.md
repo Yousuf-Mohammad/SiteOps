@@ -162,6 +162,85 @@ returning 0% instead of throwing (3).
 
 ---
 
+## Phase 7 — Two-key approval
+
+The centrepiece. Closes risk-log rows 4, 10 and 11, and finishes row 5.
+
+### Two independent guarantees, doing different jobs
+
+This is the part worth being precise about, because the two are easy to conflate:
+
+- **`@@unique([claimId, actorId])` on `ClaimDecision`** stops the **same person** turning both keys. A
+  *correctness* rule, enforced by Postgres rather than by a query the application could forget to run.
+  A duplicate raises `P2002`, caught and rethrown as 409 *"You have already recorded a decision on this
+  claim"* — the generic filter message would say "a record with these values already exists", which explains
+  nothing to a reviewer.
+- **Compare-and-swap on the exact observed status** stops **two different people** both winning the same
+  transition. A *concurrency* rule.
+
+Neither substitutes for the other. The unique constraint is useless against two distinct approvers racing;
+the CAS is useless against one person submitting twice with different timing.
+
+### A real bug the tests caught
+
+My first implementation matched a *set* of acceptable source statuses:
+`where: { status: { in: ['SUBMITTED', 'PARTIALLY_APPROVED'] } }`. Two approvers racing on a `SUBMITTED`
+$1,750 claim then **both succeeded** — the second found `PARTIALLY_APPROVED`, which the first had just
+written, still inside the set, and overwrote it with the same value. Two keys were burned and the claim never
+advanced.
+
+The fix is genuine compare-and-swap: `where: { id, orgId, status: claim.status }` — the exact status the
+decision was computed from. Anything else and the second writer silently no-ops.
+
+The lesson is that "put the status in the WHERE clause" is not sufficient on its own; it has to be the
+*expected* status, not a set of tolerable ones. The concurrency test is what surfaced this — it was written
+before the implementation was believed correct, and it failed the first time it ran.
+
+### The rules, as implemented
+
+| Action | From | Condition | To |
+|---|---|---|---|
+| approve | `SUBMITTED` | total ≤ $1,000.00 | `APPROVED` |
+| approve | `SUBMITTED` | total > $1,000.00 | `PARTIALLY_APPROVED` |
+| approve | `PARTIALLY_APPROVED` | — | `APPROVED` |
+| reject | `SUBMITTED` or `PARTIALLY_APPROVED` | — | `REJECTED` |
+
+**The threshold is `>`, not `>=`.** The brief says the rule applies when the total *exceeds* $1,000.00, so
+exactly $1,000.00 is one key and $1,000.01 is two. Compared as `Decimal`, never a float. Both sides of the
+boundary are asserted, because that is exactly where an operator slip hides.
+
+**No self-dealing** is checked explicitly and *first*, so the submitter gets an error naming the real reason
+rather than a confusing state conflict later. It applies to rejection too, and to the second key — a test
+covers the case where the submitter tries to finish a claim someone else has already part-approved.
+
+**Rejection is single-key and decisive from either state.** One reviewer objecting stops the claim even after
+a colleague approved it; the earlier `APPROVE` row stays as history, so Phase 13's timeline can show the
+disagreement rather than hiding it.
+
+**Only final approval publishes.** `outbox.enqueue` fires when the status actually becomes `APPROVED`, never
+on a first key — verified live: a two-key claim produced exactly one `claim.approved` event, and the dev
+relay delivered it. `reports.service.ts` sums `status: 'APPROVED'`, so burn moved with no extra wiring.
+
+**The loser of a race is rolled back entirely** — its decision row disappears with the transaction, so a 409
+leaves no trace and the reviewer simply retries, at which point their decision lands as the second key. A
+test walks exactly that recovery.
+
+### Test rigour
+
+26 new e2e tests (82 total). Three mutants, all killed:
+
+| Mutation | Tests failed |
+|---|---|
+| `>` → `>=` on the threshold | 1 (the $1,000.00 boundary) |
+| CAS → match any acceptable from-status | 3 (all race-safety cases) |
+| Remove the self-dealing check | 4 |
+
+Verified live end to end: submitter → 403, Carol → `PARTIALLY_APPROVED`, Carol again → 409, Dan → `APPROVED`;
+$1,000.00 → one key; $1,000.01 → two; reject from `PARTIALLY_APPROVED` → `REJECTED`. Audit trail reads
+`claim.created → claim.submitted → claim.partially_approved → claim.approved`.
+
+---
+
 ## Phase 6 — Lodgment (`submit`)
 
 The first state change in the module, and the first place the race-safety pattern lands. Closes risk-log
