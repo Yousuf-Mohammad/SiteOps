@@ -162,6 +162,60 @@ returning 0% instead of throwing (3).
 
 ---
 
+## Phase 8 — Permission guards
+
+Closes bug 10 / risk-log row 12 — the last authorization gap in the backend.
+
+**The hole was real and demonstrated, not theoretical.** During the Phase 7 verification, **Bob turned the
+first key on a $1,750 claim** despite holding only `claims.create`. No claims route had a guard, so the
+seeded permission model was decorative. Now:
+
+```
+Bob approves    -> FORBIDDEN: Missing permission: claims.approve
+Alice approves  -> FORBIDDEN: Missing permission: claims.approve
+Carol approves  -> PARTIALLY_APPROVED
+Dan approves    -> APPROVED
+```
+
+| Route | Permission |
+|---|---|
+| `GET /claims`, `GET /claims/:id` | — (org-scoped only) |
+| `POST /claims`, `POST /claims/:id/submit` | `claims.create` |
+| `POST /claims/:id/approve`, `/reject` | `claims.approve` |
+
+**Reads carry no permission because no such permission exists in this system.** Every other module guards
+reads with `<module>.read`, but **no seeded user holds `claims.read`** — enforcing an invented one would 403
+every seeded user and break the web app, and borrowing `claims.create` would assert something untrue ("you
+may read claims because you may create them"). `NotesController` is the precedent: a finished module that
+attaches the guard at class level and declares no per-route permissions, relying on org scoping. Claims does
+the same. The model stays honest — only permissions that are actually granted are enforced.
+
+**`submit` takes `claims.create`, not a permission of its own.** Lodging is the tail of authoring. Note that
+permission and ownership are *separate* checks doing different jobs: the permission answers "may you do this
+kind of thing", the Phase 6 ownership rule answers "may you do it to *this* record". A test covers Bob —
+who clears the guard with `claims.create` and is then stopped by ownership with a different message.
+
+**Denied requests never reach the service.** A test asserts the database is untouched after a refused
+approval — no `ClaimDecision`, no audit row, no status change, no outbox event — rather than merely checking
+the status code. Confirmed live: after Bob's and Alice's denied attempts, only Carol's and Dan's decisions
+exist.
+
+**The guard must not change Phase 5's isolation semantics** — a foreign claim still 404s rather than 403ing,
+since a 403 would confirm the id exists. Asserted explicitly.
+
+### A test-fixture bug this phase exposed
+
+The e2e harness gave carol/dan `claims.approve` **without** `claims.create`, unlike the real seed where site
+leads hold both. Once guards existed, the self-dealing tests would have passed for the wrong reason: an
+approver submitting and then approving their own claim would be blocked by the *permission* guard, never
+reaching the self-dealing rule they were written to exercise. Fixed the harness to mirror the seed, and
+rewrote those tests to use Carol — who holds `claims.approve` — so they now test what their names claim.
+A test that passes for the wrong reason is worse than one that fails.
+
+**Test rigour.** 13 new e2e tests (95 total). Removing `@UseGuards(PermissionsGuard)` fails 7 of them.
+
+---
+
 ## Phase 7 — Two-key approval
 
 The centrepiece. Closes risk-log rows 4, 10 and 11, and finishes row 5.

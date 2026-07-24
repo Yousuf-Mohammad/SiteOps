@@ -147,36 +147,43 @@ describe('POST /api/claims/:id/approve and /reject', () => {
   });
 
   describe('no self-dealing', () => {
+    /**
+     * Carol holds `claims.approve`, so these exercise the self-dealing rule
+     * itself rather than being short-circuited by the permission guard.
+     */
     it('refuses the submitter approving their own claim', async () => {
-      const claim = await lodged('50.00', org.aliceId);
+      const claim = await lodged('50.00', org.carolId);
 
-      const res = await approve(claim.id, org.aliceId).expect(403);
+      const res = await approve(claim.id, org.carolId).expect(403);
 
       expect(res.body.error.message).toMatch(/cannot approve a claim you submitted/i);
       expect(await statusOf(claim.id)).toBe('SUBMITTED');
     });
 
     it('refuses the submitter rejecting their own claim', async () => {
-      const claim = await lodged('50.00', org.aliceId);
+      const claim = await lodged('50.00', org.carolId);
 
-      await reject(claim.id, org.aliceId).expect(403);
+      const res = await reject(claim.id, org.carolId).expect(403);
 
+      expect(res.body.error.message).toMatch(/cannot reject a claim you submitted/i);
       expect(await statusOf(claim.id)).toBe('SUBMITTED');
     });
 
     it('refuses the submitter even as the second key', async () => {
-      // Bob submits; carol turns the first key; bob must not finish it.
-      const claim = await lodged('1750.00', org.bobId);
-      await approve(claim.id, org.carolId).expect(201);
+      // Carol submits; dan turns the first key; carol must not finish it,
+      // despite holding claims.approve.
+      const claim = await lodged('1750.00', org.carolId);
+      await approve(claim.id, org.danId).expect(201);
 
-      await approve(claim.id, org.bobId).expect(403);
+      const res = await approve(claim.id, org.carolId).expect(403);
 
+      expect(res.body.error.message).toMatch(/cannot approve a claim you submitted/i);
       expect(await statusOf(claim.id)).toBe('PARTIALLY_APPROVED');
     });
 
     it('leaves no decision row behind after a refused attempt', async () => {
-      const claim = await lodged('50.00', org.aliceId);
-      await approve(claim.id, org.aliceId).expect(403);
+      const claim = await lodged('50.00', org.carolId);
+      await approve(claim.id, org.carolId).expect(403);
 
       expect(await prisma.claimDecision.count({ where: { claimId: claim.id } })).toBe(0);
     });

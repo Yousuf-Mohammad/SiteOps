@@ -55,11 +55,15 @@ export async function createTestOrg(prisma: PrismaService): Promise<TestOrg> {
       data: { orgId: org.id, email: `${name}-${suffix}@e2e.test`, name, permissions },
     });
 
+  // Mirrors the real seed: supervisors can only create, site leads can create
+  // *and* approve. Giving approvers `claims.create` matters — without it a
+  // self-dealing test would be masked by a permission 403 and would pass for
+  // the wrong reason.
   const [alice, bob, carol, dan] = await Promise.all([
-    mkUser('alice', ['claims.create', 'claims.read']),
-    mkUser('bob', ['claims.create', 'claims.read']),
-    mkUser('carol', ['claims.approve', 'claims.read']),
-    mkUser('dan', ['claims.approve', 'claims.read']),
+    mkUser('alice', ['claims.create']),
+    mkUser('bob', ['claims.create']),
+    mkUser('carol', ['claims.create', 'claims.approve']),
+    mkUser('dan', ['claims.create', 'claims.approve']),
   ]);
 
   const project = await prisma.project.create({
