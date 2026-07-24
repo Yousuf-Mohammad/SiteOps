@@ -137,6 +137,78 @@ returning 0% instead of throwing (3).
 
 ---
 
+## Phase 4 — Safe `create` + the e2e harness
+
+Closes risk-log rows 1, 3 (write half), 9 and 11, and retires bugs 1–7. First phase to touch
+`claims.service.ts`. `findAll`/`findOne` are deliberately left broken — Phase 5 owns them.
+
+**`create` now follows `dockets.service.ts` exactly.** The project is org-validated before anything else
+(400 if it isn't ours), then one `$transaction` does the rest: read the org's rates → `resolveLevyRate` →
+`computeTotals` → `sequence.next(tx, orgId, 'claim:<fy>')` → write the claim → `audit.record(…, tx)`. The
+rate that prices the claim, the number that identifies it, and the record that it happened all commit or roll
+back together. A rolled-back create skips a sequence value rather than reusing it — gaps are fine, duplicates
+are not.
+
+**Status is hardcoded `'DRAFT'`** and `status` is gone from `CreateClaimDto`. `main.ts` runs the
+`ValidationPipe` without `whitelist`, so an unknown key is ignored rather than rejected — removing the field
+is enough, and a test POSTs `{"status":"APPROVED"}` to prove the claim still lands as DRAFT.
+
+**Validation now guards the money path**: `@ArrayNotEmpty` on lines, `@IsInt`/`@IsPositive` on quantity,
+`@IsPositive` + `maxDecimalPlaces: 2` on unitPrice. A three-decimal price would otherwise be rounded away
+silently, and a claim with no lines would total `$0.00`.
+
+**A missing surcharge rate becomes a 400, not a 500.** `resolveLevyRate` throws a plain `Error` by design
+(Phase 2 keeps it framework-free); the service catches it and rethrows as `BadRequestException`.
+
+### Correction: bug 12 was wrong
+
+The Phase 0.5 audit claimed `claims.module.ts` couldn't reach the kernel because it doesn't import
+Sequence/Audit/Outbox. **It can** — all four kernel modules are `@Global()`, which is why `dockets.module.ts`
+also has no `imports` array yet injects all three services. `plan.md:108` carries the same mistake. No module
+change was needed; only the service constructor. The inventory entry is struck through rather than deleted,
+since a withdrawn finding is part of the record.
+
+### `GlobalExceptionFilter` was dead code
+
+It was defined but never registered — no `APP_FILTER`, no `useGlobalFilters`. Errors came back as raw Nest
+defaults (`{"message":"Unknown user","error":"Unauthorized","statusCode":401}`) rather than the envelope
+`CLAUDE.md` documents as global behaviour. Registered via `APP_FILTER` in `app.module.ts`, mirroring the
+`APP_INTERCEPTOR` already there. Errors are now
+`{"success":false,"error":{"code":"BADREQUEST","message":"Unknown project"},"timestamp":…}`.
+
+This is outside `api/src/claims/`, but Phase 4's and Phase 8's gates both assert on enveloped errors, and the
+frontend client (`web/lib/api/client.ts:40`) already reads `body.error.message` — it was coded against a
+contract the server wasn't honouring.
+
+### Observed but not fixed: the auth stand-in doesn't bind user to org
+
+`auth/fake-auth.middleware.ts:20-26` looks the user up by id and accepts whatever `x-org-id` is sent — it
+never checks `user.orgId === orgId`. Any valid user id can be paired with any org id. Not fixed: it is the
+fake-auth stand-in, and the brief explicitly says not to add real auth. It is, however, precisely why the
+service must scope every query by `req.orgId` and validate client-supplied ids rather than trusting the
+caller — the defence has to live in the data layer because the auth layer isn't one.
+
+### The e2e harness
+
+`npm run test:e2e` pointed at `test/jest-e2e.json`, which never existed. Now scaffolded:
+
+- `test/setup-app.ts` boots the real `AppModule` and configures it **exactly as `main.ts` does** (same global
+  prefix, same `ValidationPipe`), so tests exercise the real pipeline including the envelope and the filter.
+- **Each run creates its own organization** with its own users, project and rates, and deletes everything
+  under that `orgId` afterwards. Seeded data is never touched, `npm run test:e2e` needs no setup beyond a
+  running container, and a brand-new org means its claim sequence starts at 1 — so `EXP 26-0001` can be
+  asserted without depending on what else is in the database. Verified after a full run: still exactly two
+  orgs, the four seeded claims unchanged, sequences still 4 and 102.
+- 23 tests covering reference format and per-FY numbering, both golden examples, effective-dated rate
+  selection, client-supplied status, org scoping, validation, the audit row, rollback behaviour, and the
+  response envelope in both success and error shapes.
+
+**The concurrency test has teeth.** Restoring the starter's `claim.count() + 1` in place of
+`sequence.next` fails 2 of the 23 — including `Promise.all` of five creates, which produces duplicate
+references. That is the test the starter could not pass, and the reason `SequenceService` exists.
+
+---
+
 ## Phase 3 — Schema migration
 
 Closes risk-log rows 2 (storage half), 4 and 8. One migration:
@@ -305,7 +377,7 @@ Numbered so later sections can cite them. "Fix" states the intent, not yet the i
 | 9 | `claims.service.ts:50-52` | **`findUnique({ where: { id } })` with no `orgId` — any org can read any claim by id.** The most serious defect in the module. | `findFirst({ where: { id, orgId } })`; 404 when not in org. |
 | 10 | `claims.controller.ts:6-8` | No `@UseGuards(PermissionsGuard)` and no `@Permissions(...)` on any route. | Guard the controller; `claims.create` on create/submit, `claims.approve` on approve/reject. |
 | 11 | `claims.controller.ts:23` | `findOne` never forwards `orgId` to the service — this is what makes bug 9 reachable. | Pass `req.orgId` through. |
-| 12 | `claims.module.ts` | Does not import the Sequence / Audit / Outbox modules, so the service has no access to the platform kernel. | Import them and inject into the service. |
+| 12 | ~~`claims.module.ts`~~ | ~~Does not import the Sequence / Audit / Outbox modules, so the service has no access to the platform kernel.~~ **Withdrawn — this was wrong.** `SequenceModule`, `AuditModule`, `OutboxModule` and `PrismaModule` are all `@Global()`, so no import is needed; `dockets.module.ts` has an empty `imports` and injects all three regardless. | No module change. Inject into the service constructor. Corrected in Phase 4. |
 
 ### Reference implementation
 
