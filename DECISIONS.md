@@ -192,6 +192,12 @@ now link here — the link that phase deliberately deferred until the route exis
 
 ### Gating — permission *and* ownership, mirroring the server
 
+**Lodgment lives here too.** A "Submit for approval" button appears when `isSubmitter && status === 'DRAFT'`
+— the same ownership + state rule the server enforces (`POST /claims/:id/submit`). Without it a DRAFT claim
+was strand­ed in the UI: the form could create one but nothing could move it to SUBMITTED, so the whole
+DRAFT → SUBMITTED → two-key → APPROVED lifecycle is only now walkable end to end in the browser. It
+invalidates `['claims']` but not burn — nothing is approved yet.
+
 Approve/Reject show only when `can('claims.approve')` **and** the status is actionable **and**
 `actingId !== submitterId`. The self-dealing hide is a UI courtesy — the API enforces it regardless — but
 showing an approver a button that can only 403 on their own claim is a worse experience than not showing it.

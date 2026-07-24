@@ -68,6 +68,14 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
 
   const nameOf = (userId: string) => users.find((u) => u.id === userId)?.name ?? 'Someone';
 
+  // Lodgment: the submitter sending their own draft for review. No burn change —
+  // nothing is approved yet. The ['claims'] prefix refetches this detail and the
+  // list.
+  const submit = useMutation({
+    mutationFn: () => apiPost(`/claims/${id}/submit`, {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.claims.all }),
+  });
+
   // Approve/reject both change claim lists and, on final approval, the burn
   // dashboard — invalidate both (house rule). The ['claims'] prefix covers this
   // detail query and the list.
@@ -92,6 +100,9 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
     can('claims.approve') &&
     !isSubmitter &&
     (claim.status === 'SUBMITTED' || claim.status === 'PARTIALLY_APPROVED');
+  // Only the claim's own submitter lodges it, and only from DRAFT — mirrors the
+  // server's ownership + state rule.
+  const canSubmit = isSubmitter && claim.status === 'DRAFT';
 
   // The first key on THIS revision — revision-scoped so a reopened claim's old
   // decisions never mislead about who is pending.
@@ -179,6 +190,19 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
           </ul>
         </div>
       </div>
+
+      {canSubmit && (
+        <div className="card" style={{ padding: 16, marginTop: 16 }}>
+          <button className="primary" disabled={submit.isPending} onClick={() => submit.mutate()}>
+            {submit.isPending ? 'Submitting…' : 'Submit for approval'}
+          </button>
+          {submit.isError && (
+            <p style={{ color: 'var(--danger)' }}>
+              {submit.error instanceof ApiError ? submit.error.message : 'Submit failed'}
+            </p>
+          )}
+        </div>
+      )}
 
       {claim.status === 'PARTIALLY_APPROVED' && (
         <div className="card" style={{ padding: 16, marginTop: 16 }}>
