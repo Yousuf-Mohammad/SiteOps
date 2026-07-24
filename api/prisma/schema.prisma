@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  users    User[]
+  claims   Claim[]
+  rates    SurchargeRate[]
+  projects Project[]
+  audits   AuditLog[]
+}
+
+model User {
+  id          String   @id @default(cuid())
+  orgId       String
+  email       String   @unique
+  name        String
+  permissions String[] @default([])
+  createdAt   DateTime @default(now())
+
+  org    Organization @relation(fields: [orgId], references: [id])
+  claims Claim[]
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  orgId     String
+  code      String
+  name      String
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+
+  org     Organization @relation(fields: [orgId], references: [id])
+  claims  Claim[]
+  dockets Docket[]
+
+  @@unique([orgId, code])
+  @@index([orgId, status])
+}
+
+model Claim {
+  id          String    @id @default(cuid())
+  orgId       String
+  projectId   String
+  submitterId String
+  reference   String    @unique
+  status      String    @default("DRAFT")
+  expenseDate DateTime
+  total       Float     @default(0)
+  approvedBy  String?
+  approvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id])
+  project   Project      @relation(fields: [projectId], references: [id])
+  submitter User         @relation(fields: [submitterId], references: [id])
+  lines     ClaimLine[]
+
+  @@index([status, orgId])
+}
+
+model ClaimLine {
+  id          String  @id @default(cuid())
+  claimId     String
+  description String
+  quantity    Int
+  unitPrice   Float
+  isFuel      Boolean @default(false)
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+}
+
+model SurchargeRate {
+  id            String   @id @default(cuid())
+  orgId         String
+  ratePercent   Float
+  effectiveFrom DateTime
+
+  org Organization @relation(fields: [orgId], references: [id])
+}
+
+model NumberSequence {
+  id        String @id @default(cuid())
+  orgId     String
+  key       String
+  nextValue Int    @default(1)
+
+  @@unique([orgId, key])
+}
+
+model Equipment {
+  id             String   @id @default(cuid())
+  orgId          String
+  assetCode      String
+  name           String
+  category       String
+  hireRatePerDay Decimal  @db.Decimal(10, 2)
+  status         String   @default("ACTIVE")
+  createdAt      DateTime @default(now())
+
+  dockets Docket[]
+
+  @@unique([orgId, assetCode])
+  @@index([orgId, category])
+}
+
+model Docket {
+  id            String    @id @default(cuid())
+  orgId         String
+  projectId     String
+  equipmentId   String
+  docketNumber  String
+  workDate      DateTime
+  hours         Decimal   @db.Decimal(5, 2)
+  notes         String?
+  status        String    @default("DRAFT")
+  submittedById String
+  confirmedById String?
+  confirmedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  project   Project   @relation(fields: [projectId], references: [id])
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@unique([orgId, docketNumber])
+  @@index([orgId, projectId, workDate])
+}
+
+model OutboxEvent {
+  id          String    @id @default(cuid())
+  orgId       String
+  type        String
+  payload     Json
+  status      String    @default("PENDING")
+  attempts    Int       @default(0)
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([status, createdAt])
+}
+
+model Note {
+  id         String   @id @default(cuid())
+  orgId      String
+  entityType String
+  entityId   String
+  authorId   String
+  body       String
+  createdAt  DateTime @default(now())
+
+  @@index([orgId, entityType, entityId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  orgId      String
+  actorId    String
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id])
+
+  @@index([orgId, entityType, entityId])
+}

@@ -1,0 +1,52 @@
+name: siteops
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: claims
+      POSTGRES_PASSWORD: claims
+      POSTGRES_DB: claims
+    ports:
+      - "5433:5432"
+    volumes:
+      - claims-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claims -d claims"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    environment:
+      DATABASE_URL: "postgresql://claims:claims@db:5432/claims"
+      PORT: "3100"
+    ports:
+      - "3100:3100"
+      - "5555:5555"   # Prisma Studio (docker compose exec api npx prisma studio)
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./api/src:/app/src
+      - ./api/prisma:/app/prisma
+
+  web:
+    build: ./web
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:3100/api"
+      # Seeded roadco org + Alice user ids are injected here after the API seeds.
+      NEXT_PUBLIC_FAKE_ORG_ID: "${NEXT_PUBLIC_FAKE_ORG_ID:-}"
+      NEXT_PUBLIC_FAKE_USER_ID: "${NEXT_PUBLIC_FAKE_USER_ID:-}"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    volumes:
+      - ./web/app:/app/app
+      - ./web/components:/app/components
+      - ./web/lib:/app/lib
+
+volumes:
+  claims-db:

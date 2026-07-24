@@ -1,0 +1,16 @@
+name: expense-claims-starter
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: claims
+      POSTGRES_PASSWORD: claims
+      POSTGRES_DB: claims
+    ports:
+      - "5433:5432"
+    volumes:
+      - claims-db:/var/lib/postgresql/data
+
+volumes:
+  claims-db:
