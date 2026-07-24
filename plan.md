@@ -51,6 +51,10 @@ Scoped to the claims module only (`api/src/claims/`, the claims-owned schema mod
 | 12 | Unguarded routes — anyone can create or approve | `@UseGuards(PermissionsGuard)` + `@Permissions('claims.create' / 'claims.approve')` | 10 | Phase 8 |
 | 13 | CSV `split(',')` corrupts quoted `"1,299.50"` | Real CSV parser; per-group best-effort with row numbers | — | Phase 9 |
 | 14 | Web preview total disagrees with the stored total | Share or exactly mirror `computeTotals`; note any duplication | 14* | Phase 12 |
+| 15 | A corrected claim locks out its own approver — `@@unique([claimId, actorId])` blocks whoever rejected it | Scope it to the revision judged: `@@unique([claimId, revision, actorId])` | — | Phase 10 |
+
+Row 15 was **added during Phase 10**, not written up front: it only exists because the fix for risk 4 collides
+with the reopen flow, which nothing could reach while `REJECTED` was terminal.
 
 Rows 4, 5, 8, 10, 13 carry no bug number — that functionality doesn't exist in the starter yet, so there is
 nothing to be wrong. *Row 14 cites `WORKPLAN.md` item 14 (web screens); the Phase 0.5 inventory covers the API only.
@@ -172,10 +176,17 @@ collect `{ rows: number[], reason }` for invalid groups; return created + reject
 
 ---
 
-## Phase 10 — Rejected-claims decision
+## Phase 10 — Rejected-claims decision — ✅ DONE
 🎯 Resolve "rejected claims come back around" and implement it.
 ✏️ Pick one (reopen to DRAFT / new revision / resubmit from REJECTED), implement the minimal transition, document the reasoning.
 ✅ **Gate:** the chosen transition works end-to-end and is covered by a test; rationale written in `DECISIONS.md`.
+
+**Chosen: correct-and-reopen in place.** `POST /claims/:id/reopen` with optional corrected `lines` moves
+`REJECTED → DRAFT` on the same claim — same reference, `revision + 1`, totals recomputed against the
+*snapshotted* levy rate. Submitter-only, `claims.create`, race-safe via the status-in-WHERE update, audited,
+no outbox event. Exposed and closed **risk 15**: decision uniqueness moved to
+`@@unique([claimId, revision, actorId])` so the approver who rejected a claim can rule on the correction.
+18 e2e tests; both mutants killed; rationale in `DECISIONS.md` → "Phase 10 — The rejected-claims question".
 📝 Commit: `feat(claims): rejected-claim reopen flow`
 
 ---

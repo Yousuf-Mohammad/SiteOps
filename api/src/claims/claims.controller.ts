@@ -18,6 +18,7 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { ListClaimsDto } from './dto/list-claims.dto';
+import { ReopenClaimDto } from './dto/reopen-claim.dto';
 
 @Controller('claims')
 @UseGuards(PermissionsGuard)
@@ -69,6 +70,18 @@ export class ClaimsController {
   @Permissions('claims.approve')
   reject(@Param('id') id: string, @Req() req: Request) {
     return this.claims.reject((req as any).orgId, (req as any).user.id, id);
+  }
+
+  /**
+   * Correct a rejected claim and send it back to DRAFT.
+   *
+   * Authoring, not approving: it takes `claims.create`, like create and submit.
+   * The approver decides; the submitter fixes.
+   */
+  @Post(':id/reopen')
+  @Permissions('claims.create')
+  reopen(@Param('id') id: string, @Body() dto: ReopenClaimDto, @Req() req: Request) {
+    return this.claims.reopen((req as any).orgId, (req as any).user.id, id, dto);
   }
 
   /**

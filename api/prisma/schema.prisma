@@ -55,6 +55,10 @@ model Claim {
   submitterId String
   reference   String
   status      String    @default("DRAFT")
+  // Bumped each time a rejected claim is corrected and reopened. The claim keeps
+  // its reference — this is what records that the money underneath it changed,
+  // and what scopes the decision uniqueness below.
+  revision    Int       @default(1)
   expenseDate DateTime
   total       Decimal   @default(0) @db.Decimal(12, 2)
   // Levy inputs snapshotted at creation. A later rate change must not alter an
@@ -90,18 +94,25 @@ model ClaimLine {
   claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
 }
 
-/// One approver, one decision. The unique constraint below is what physically
-/// stops the same person turning both keys on a two-key claim.
+/// One approver, one decision *per revision*. The unique constraint below is what
+/// physically stops the same person turning both keys on a two-key claim.
+///
+/// It is scoped to the revision the decision was made on: a judgement is about a
+/// specific set of numbers, so correcting a rejected claim spends the old
+/// judgements and resets the keys. Without the revision, the approver who asked
+/// for a correction could never rule on the correction.
 model ClaimDecision {
   id        String   @id @default(cuid())
   claimId   String
+  /// The Claim.revision this decision was made against.
+  revision  Int      @default(1)
   actorId   String
   decision  String
   createdAt DateTime @default(now())
 
   claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
 
-  @@unique([claimId, actorId])
+  @@unique([claimId, revision, actorId])
   @@index([claimId])
 }
 

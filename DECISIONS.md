@@ -34,11 +34,16 @@ prevents it, the starter bug it corresponds to, and the phase whose test demonst
 | 12 | Unguarded routes — anyone can create or approve | `@UseGuards(PermissionsGuard)` on the controller, `@Permissions('claims.create')` / `('claims.approve')` per route | 10 | Phase 8 |
 | 13 | CSV import corrupts quoted values — `split(',')` breaks `"1,299.50"` into two fields | A real CSV parser; per-group best-effort so one bad line rejects only its own claim, with row numbers reported | — | Phase 9 |
 | 14 | The web preview total disagrees with the stored total | Share or exactly mirror `computeTotals`; the duplication, if any, is recorded here | 14* | Phase 12 |
+| 15 | A corrected claim locks out its own approver — `@@unique([claimId, actorId])` means whoever rejected it can never rule on the fix | Scope the constraint to the revision being judged: `@@unique([claimId, revision, actorId])`; correcting a claim spends the old judgements and resets the keys | — | Phase 10 |
 
 Rows 3 and 9 are security defects rather than ordinary bugs, and are called out as such.
 Rows 4, 5, 8, 10 and 13 have no bug number because they are not *wrong* in the starter — the functionality
 does not exist at all yet. *Row 14 refers to `WORKPLAN.md` item 14 (the web screens), not the Phase 0.5
 inventory, which covers the API only.
+
+**Row 15 was added during Phase 10, not written up front** — it only exists because Phase 7's fix to risk 4
+collides with the reopen flow. It is recorded here rather than folded silently into the Phase 10 notes: a risk
+log that only ever shrinks is a risk log that stopped being read.
 
 **On the missing commit.** `plan.md:40` asks for a `docs: risk log` commit at this gate. This folder is not
 a git repository, so no commit was made. Recorded here so the gap is a decision, not an oversight.
@@ -159,6 +164,113 @@ for snapshotting the rate in Phase 3 made concrete.
 failure — only the UTC-boundary test, exactly as designed), the FY boundary off by a month (3), taking the
 first applicable rate instead of the latest (6), exclusive instead of inclusive `effectiveFrom` (2), and
 returning 0% instead of throwing (3).
+
+---
+
+## Phase 10 — The rejected-claims question
+
+The brief's one deliberately unanswered question (`ASSESSMENT-BRIEF.md:52`): an ops lead mentioned in passing
+that rejected claims *"usually come back around after the supervisor fixes them."* Nothing else is written
+down. Opens and closes risk-log row 15.
+
+Before this phase `REJECTED` was terminal — `decide` accepts only `SUBMITTED`/`PARTIALLY_APPROVED` and
+`submit` only `DRAFT`, so a rejected claim was a dead row. The supervisor's only recourse was to author a
+fresh claim, which burns a sequence number and severs the trail between the two.
+
+### The decision: correct in place, version by revision
+
+`POST /claims/:id/reopen` moves `REJECTED → DRAFT` on the **same claim**, incrementing a new `revision`
+counter. The body optionally carries corrected `lines`.
+
+**Why the same claim keeps its reference.** `EXP 26-0007` is the claim's identity — on the paper trail, in the
+finance inbox, and in the yard where someone says "0007 came back". Issuing `EXP 26-0012` for a corrected
+`EXP 26-0007` leaves two numbers for one real-world expense and makes anyone reconciling them do a join that
+exists nowhere on paper. The reference names the *expense*; the revision records that the money underneath it
+moved.
+
+**Why correction and transition are one call.** The alternative — reopen to DRAFT, then `PATCH` the lines —
+creates an editable-DRAFT surface the brief never asks for (`ASSESSMENT-BRIEF.md:50` lists no PATCH) and
+allows a half-fixed claim to sit between two requests. One endpoint, one transaction: the claim is either
+still rejected or correctly reopened.
+
+**`lines` is optional.** Omitting it reopens the claim unchanged, which is the "rejected in error" case. The
+supplied list *replaces* the existing lines rather than patching them: a claim line has no identity of its
+own, and reconciling ids would invent one.
+
+**`expenseDate` is immutable.** It fixes the FY inside the reference and selects the levy rate. Allowing it to
+change would make `EXP 26-0007` name a claim it no longer describes. A claim for a different date is a
+different claim.
+
+**Reopening is authoring, not approving.** It takes `claims.create` and is restricted to the claim's own
+submitter — the same permission and the same ownership rule as `submit`. The approver decides; the submitter
+fixes. Correspondingly, reopening publishes **no** outbox event: a claim going back for correction is
+internal traffic, and `claim.approved` stays the only domain event this module emits.
+
+### The constraint this exposed — risk 15
+
+Phase 7 put `@@unique([claimId, actorId])` on `ClaimDecision` as the physical guarantee that one person cannot
+turn both keys. The reopen flow collides with it head-on: Carol rejects `EXP 26-0007`, the supervisor fixes
+it, and Carol is now **permanently unable to rule on the correction she asked for** — `decide` throws
+`409 You have already recorded a decision`. The approver most qualified to confirm the fix is the one person
+locked out of it.
+
+This was not visible before Phase 10, because nothing could follow a rejection.
+
+The fix is to scope the constraint to what the decision was actually about:
+
+```prisma
+@@unique([claimId, revision, actorId])   // was [claimId, actorId]
+```
+
+A decision is a judgement about a specific set of numbers. When the numbers change the judgement is spent, and
+the keys reset. Carol rejecting revision 1 and approving revision 2 is not one person turning two keys — it is
+one person ruling on two different claims that happen to share a reference. Within a revision the original
+guarantee is untouched: the same person still cannot decide twice.
+
+Everything else falls out of the status reset. A claim that reached `PARTIALLY_APPROVED` before being rejected
+comes back as `DRAFT`, so the two-key count starts from zero — a corrected claim never arrives half-approved.
+Prior revisions' decisions are **retained**, not deleted; who rejected what, and when, is the audit trail.
+
+### Money does not move because the claim was corrected
+
+Totals recompute from the `levyRatePercent` **snapshotted on the row**, never a fresh `resolveLevyRate`
+lookup. The claim is priced by the rate in force the day the expense was incurred; that is settled at
+creation, and fixing a typo in a quantity must not silently reprice the claim because a newer rate has since
+taken effect. This is risk-log row 8 applied to a case that did not exist when the row was written.
+
+The test asserts it under adversarial conditions: a 30% rate is inserted *between* the rejection and the fix,
+and the corrected total still prices at the snapshotted 12.5%.
+
+### Race safety
+
+`REJECTED` sits inside the `updateMany` WHERE, exactly as `submit` and `decide` do it. Two supervisors
+reopening at once produce one 201 and one 409, and the revision lands on **2, not 3**. That last assertion is
+the point: a read-then-write would produce revision 3 and two audit rows for one correction.
+
+Ownership is checked outside the compare-and-swap, unlike in `submit`. That is not a TOCTOU — `submitterId` is
+immutable after creation, so it cannot change under the check. Only `status` races, and it stays in the WHERE.
+
+### Verification
+
+18 e2e tests (`api/test/claims-reopen.e2e-spec.ts`), of which the load-bearing one is: Carol rejects a $1,750
+claim → the supervisor reopens it at $1,600 → resubmits → **Carol approves** (first key) → Dan approves →
+`APPROVED`, one outbox event. That test fails with a 409 on the pre-Phase-10 constraint.
+
+**Mutation testing** (two mutants, both killed, restored from a file backup rather than `git checkout` —
+see the Phase 5 process note):
+
+| Mutant | Result |
+|---|---|
+| `ClaimDecision.revision` hardcoded to `1` (i.e. the old constraint's behaviour) | 4 failures — all four revision-isolation tests |
+| `status: 'REJECTED'` dropped from the reopen WHERE | 4 failures — the three wrong-status tests **and the concurrency test**, which is what proves the CAS bounds the revision |
+
+Live round trip against the running container confirmed the whole cycle end to end, with the database showing
+decisions stamped `(1, REJECT)`, `(2, APPROVE)`, `(2, APPROVE)`, a `claim.reopened` audit row recording
+`1750.00 → 1600.00`, and exactly one `claim.approved` outbox event carrying the corrected total.
+
+**Migration:** `20260725090000_claim_revisions`. Both columns default to `1`, so existing rows are revision 1 —
+which is what they have always effectively been — and the new unique key is strictly weaker than the one it
+replaces, so no existing row can violate it. No backfill needed.
 
 ---
 
