@@ -27,5 +27,10 @@ export class ClaimsController {
     return this.claims.findOne((req as any).orgId, id);
   }
 
-  // TODO: submit / approve / reject / import
+  @Post(':id/submit')
+  submit(@Param('id') id: string, @Req() req: Request) {
+    return this.claims.submit((req as any).orgId, (req as any).user.id, id);
+  }
+
+  // TODO: approve / reject / import
 }

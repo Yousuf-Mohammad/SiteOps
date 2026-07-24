@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { paginationMeta } from '../common/dto/pagination.dto';
 import { SequenceService } from '../common/sequence/sequence.service';
@@ -90,6 +96,57 @@ export class ClaimsService {
       );
 
       return claim;
+    });
+  }
+
+  /**
+   * Lodgment: a supervisor submitting their own draft for review.
+   *
+   * Ownership and state are both enforced *inside* the UPDATE's WHERE clause,
+   * so of two racing submissions exactly one wins. A read-then-write would let
+   * both through (TOCTOU) and audit the transition twice. The follow-up read
+   * exists only to explain a `count === 0` — never to decide the outcome.
+   */
+  async submit(orgId: string, actorId: string, id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.claim.updateMany({
+        where: { id, orgId, status: 'DRAFT', submitterId: actorId },
+        data: { status: 'SUBMITTED' },
+      });
+
+      if (updated.count === 0) {
+        const existing = await tx.claim.findFirst({
+          where: { id, orgId },
+          select: { status: true, submitterId: true },
+        });
+        if (!existing) throw new NotFoundException(`Claim ${id} not found`);
+        // Ownership outranks state: someone who may not act on this claim at
+        // all should be told that, not that the status is wrong.
+        if (existing.submitterId !== actorId) {
+          throw new ForbiddenException('Only the submitter can lodge this claim');
+        }
+        throw new ConflictException(`Claim is ${existing.status}, expected DRAFT`);
+      }
+
+      await this.audit.record(
+        {
+          orgId,
+          actorId,
+          action: 'claim.submitted',
+          entityType: 'claim',
+          entityId: id,
+          before: { status: 'DRAFT' },
+          after: { status: 'SUBMITTED' },
+        },
+        tx as any,
+      );
+
+      // Lodgment is audited, not published. The domain event is reserved for
+      // final approval, which is what the burn dashboard consumes.
+      return tx.claim.findFirstOrThrow({
+        where: { id, orgId },
+        include: { lines: true },
+      });
     });
   }
 

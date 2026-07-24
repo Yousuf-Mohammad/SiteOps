@@ -162,6 +162,46 @@ returning 0% instead of throwing (3).
 
 ---
 
+## Phase 6 — Lodgment (`submit`)
+
+The first state change in the module, and the first place the race-safety pattern lands. Closes risk-log
+row 5 for this transition.
+
+**Ownership and state are enforced in one atomic statement.** The `updateMany` WHERE carries all four
+conditions — `{ id, orgId, status: 'DRAFT', submitterId: actorId }` — so the database decides, not the
+application. Of two racing submissions exactly one gets `count: 1`; a read-then-write would let both through
+(TOCTOU) and audit the transition twice.
+
+**The follow-up read only explains a failure, it never decides one.** On `count === 0` the service re-reads
+inside the same transaction purely to produce a useful message:
+
+| Cause | Code | Message |
+|---|---|---|
+| No such claim in this org | 404 | `Claim <id> not found` |
+| Actor is not the submitter | 403 | `Only the submitter can lodge this claim` |
+| Status is not `DRAFT` | 409 | `Claim is SUBMITTED, expected DRAFT` |
+
+**Ownership is checked before status.** "You may not act on this claim at all" outranks "wrong state", so a
+colleague trying to lodge someone else's already-submitted draft gets the 403 that actually explains the
+problem. 403 leaks nothing here — any org member can already read that claim through `GET /claims/:id`, which
+is exactly why the same information is a 404 across orgs and a 403 within one.
+
+**No outbox event.** The brief reserves the domain event for *final* approval, which is what the burn
+dashboard consumes. Lodgment is audited, not broadcast — a test asserts the outbox stays empty.
+
+**Only `DRAFT` is lodgeable.** Whether a `REJECTED` claim can be re-lodged is Phase 10's open question and is
+deliberately not answered here.
+
+**Test rigour.** 15 new e2e tests. Replacing the conditional `updateMany` with a read-then-write — the exact
+TOCTOU shape `dockets.service.ts:80-83` warns about — fails **3 of them**: the two-way race, the
+audited-exactly-once assertion, and the five-way burst. Those three tests are the entire reason the pattern
+is worth writing this way, and they were confirmed to fail without it rather than assumed to.
+
+Verified live as well: Bob → 403, Alice → 201, Alice again → 409, with an audit trail reading
+`claim.created (→DRAFT)` then `claim.submitted (DRAFT→SUBMITTED)`.
+
+---
+
 ## Phase 5 — Org-scoped detail, paginated list
 
 Closes bugs 8, 9 and 11, and completes risk-log row 3. `create` is untouched.
