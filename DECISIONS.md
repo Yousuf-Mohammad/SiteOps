@@ -194,14 +194,36 @@ made quietly:
 strings (`"67.47"`), and `Decimal.toString()` drops trailing zeros (`"187"`, not `"187.00"`). Formatting is the
 frontend's job.
 
-### Environment obstacle worth recording
+### The db port moved to 5434
 
-`npx prisma migrate dev` cannot run from the host on this machine: **two host PostgreSQL services (17 and 18)
-are running and one owns `0.0.0.0:5433`**, so Docker only obtained the IPv6 binding and `localhost:5433`
-reaches host Postgres, which has no `claims` user. Migrations are therefore generated and applied **inside the
-container** (`docker compose exec api npx prisma …`), which talks to `db:5432` directly; `prisma/` is
-bind-mounted so the generated files land on the host. `migrate dev` is also interactive when it detects column
-casts, so the SQL was produced with `prisma migrate diff --script` and applied with `migrate deploy`.
+The starter published Postgres on `5433`, but that port is commonly taken by a locally-installed PostgreSQL —
+on this machine two host services (17 and 18) run at startup and one owned `0.0.0.0:5433`, leaving Docker with
+only the IPv6 binding. `localhost:5433` then reached *host* Postgres, which has no `claims` user, so every
+host-run Prisma command failed with `P1000: Authentication failed`.
+
+Changed the published port to **5434** in both `docker-compose.yml` files and `api/.env.example` (and the
+`CLAUDE.md` note). Stopping the host services would also have worked but needs administrator rights and takes
+away a service the machine may want; changing a published port costs nothing and makes the project work on any
+machine where 5433 is already claimed. The container-internal address is unaffected — the API still reaches
+`db:5432`, which is why nothing inside Docker ever noticed the problem.
+
+**Migrations are generated and applied inside the container** regardless: `migrate dev` is interactive when it
+detects column casts, which a scripted environment can't answer. The SQL was produced with
+`prisma migrate diff --script`, reviewed, saved as a migration, and applied with the non-interactive
+`migrate deploy`. `prisma/` is bind-mounted, so the generated files land on the host.
+
+### Two verification traps worth remembering
+
+**An HTTP 200 does not prove a client-rendered page works.** `web/app/claims/page.tsx` is a `'use client'`
+component that fetches in `useEffect`, so Next.js returns a 200 shell no matter what the client does
+afterwards. The `.toFixed` crash was found by reading the code, not by the 200 check — and it was later
+*observed* in a real browser, which is the only thing that actually proves the page renders.
+
+**Docker bind mounts on Windows do not reliably deliver file-change events, and `.next` survives a restart.**
+After fixing the page, the browser still showed the old code: the file was correct on the host *and* inside
+the container, but the dev server never recompiled, and `docker compose restart` reuses the same container
+filesystem so the stale `.next` cache persisted. It took `rm -rf .next` plus a restart. If a frontend edit
+appears to do nothing, suspect the cache before suspecting the edit.
 
 ---
 

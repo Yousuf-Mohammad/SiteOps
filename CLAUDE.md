@@ -77,7 +77,7 @@ web/
 
 **Everything in Docker (already wired — root `docker-compose.yml`):**
 ```bash
-docker compose up -d --build       # db (5433) + api (3100) + web (3000); api auto-migrates & seeds
+docker compose up -d --build       # db (5434) + api (3100) + web (3000); api auto-migrates & seeds
 docker compose logs -f api         # watch a service
 docker compose down                # stop (keeps data);  down -v wipes the DB
 ```
