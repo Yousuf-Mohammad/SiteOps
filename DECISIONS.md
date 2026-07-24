@@ -162,6 +162,62 @@ returning 0% instead of throwing (3).
 
 ---
 
+## Phase 9 — Best-effort CSV import
+
+The last endpoint. Closes risk-log row 13.
+
+**The parser is hand-rolled, not a dependency.** The brief plants the trap explicitly — prices arrive as
+`"1,299.50"`, and `split(',')` turns a six-column row into seven fields with the money cut in half. Parsing
+is the skill being probed, so `csv.ts` is a ~90-line RFC 4180 reader handling quoted commas, quoted newlines,
+`""` escapes, CRLF, a UTF-8 BOM, and blank rows. It carries **1-based line numbers through the whole
+pipeline**, including past skipped blank lines, so a rejection report points at the line the operator sees in
+their spreadsheet — verified live: a file with a blank line 4 still reported the bad row as `5`.
+
+**The CSV has no project column, so the project comes from the request.** `POST /claims/import` takes
+`projectId` as a form field alongside the file — one export, one job. Validated against the acting org
+exactly as `POST /claims` does, once up front: if the project is wrong, nothing in the file can succeed and
+reporting it per group would be noise.
+
+**Import reuses `create()` rather than a bulk insert.** Every imported claim therefore gets the same org
+validation, effective-dated rate, exact totals, sequence-issued reference and audit row as any other claim.
+There is no second code path to keep in step — confirmed by a test asserting golden #1 arriving via CSV
+stores `67.47` with `levyRatePercent` snapshotted.
+
+**Best-effort means each group commits in its own transaction.** Wrapping the whole import in one transaction
+would be the *opposite* of best-effort: one bad group would roll back every good one. A test proves the
+distinction by putting a group with an expense date predating every levy rate *after* a valid group — the
+first claim persists, the second is reported.
+
+**Whole-file failures are 400; per-group failures are 200 with a report.** The request was well-formed even
+though some of its contents weren't. Missing or misordered headers, an empty file, a missing file, a missing
+or foreign `projectId` — all 400. Bad rows, bad groups, ungrouped rows — all reported in the response body.
+
+**Headers may arrive in any order**; only their presence is required. Rows sharing a `group` form one claim
+**even when non-contiguous** — same group means same claim.
+
+**A group whose rows disagree on `expense_date` is rejected** rather than silently taking the first. One
+claim has one expense date, and both the FY in its reference and the levy rate applied hang off it; picking
+arbitrarily would fabricate data that looks authoritative.
+
+### Test rigour
+
+48 new unit tests (101 total) plus 19 e2e (114 total). The decisive mutation: swapping the parser for the
+naive `split(',')` implementation fails **11 unit tests and the end-to-end quoted-price test** — the claim's
+stored total comes out wrong rather than the request erroring, which is exactly why this needed a test rather
+than a review.
+
+Verified live against a realistic file:
+
+```
+created:  G1 EXP 26-0004 total=67.47    rows=[2]
+          G2 EXP 26-0005 total=3299.50  rows=[3,6]    <- non-contiguous, "1,299.50" intact
+rejected: G3 rows=[5] row 5: quantity "notanumber" is not a whole number
+          G4 rows=[7,8] rows disagree on expense_date (2026-01-18, 2026-03-02)
+summary:  { groups: 4, created: 2, rejected: 2 }
+```
+
+---
+
 ## Phase 8 — Permission guards
 
 Closes bug 10 / risk-log row 12 — the last authorization gap in the backend.

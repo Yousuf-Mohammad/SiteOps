@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -13,6 +14,7 @@ import { SequenceService } from '../common/sequence/sequence.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { fyDateRange, fyForDate, resolveLevyRate } from './claim-fy';
+import { CsvFormatError, planImport } from './claim-import';
 import { computeTotals } from './claim-totals';
 import { CreateClaimDto } from './dto/create-claim.dto';
 import { ListClaimsDto } from './dto/list-claims.dto';
@@ -150,6 +152,78 @@ export class ClaimsService {
         include: { lines: true },
       });
     });
+  }
+
+  /**
+   * Bulk import of a LegacyPlant export.
+   *
+   * Best-effort **per claim**: each valid group is created in its own
+   * transaction through the ordinary `create` path, so a group that fails
+   * cannot roll back groups already committed. Wrapping the whole import in one
+   * transaction would be the opposite of what "best-effort" means.
+   *
+   * Reusing `create` rather than writing a bulk insert is deliberate — imported
+   * claims get the same org validation, effective-dated rate, exact totals,
+   * sequence-issued reference and audit row as any other claim. There is no
+   * second code path to keep in step.
+   */
+  async importCsv(orgId: string, actorId: string, projectId: string, csv: string) {
+    // Validate the project once, up front: if it is wrong, nothing in the file
+    // can succeed and reporting it per group would be noise.
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, orgId } });
+    if (!project) throw new BadRequestException('Unknown project');
+
+    let plan;
+    try {
+      plan = planImport(csv);
+    } catch (err) {
+      if (err instanceof CsvFormatError) throw new BadRequestException(err.message);
+      throw err;
+    }
+
+    const created: {
+      group: string;
+      id: string;
+      reference: string;
+      total: string;
+      rows: number[];
+    }[] = [];
+    const rejected = [...plan.rejected];
+
+    for (const group of plan.groups) {
+      try {
+        const claim = await this.create(
+          { projectId, expenseDate: group.expenseDate, lines: group.lines },
+          actorId,
+          orgId,
+        );
+        created.push({
+          group: group.group,
+          id: claim.id,
+          reference: claim.reference,
+          total: claim.total.toString(),
+          rows: group.rows,
+        });
+      } catch (err) {
+        // A group that fails on write (e.g. no levy rate for its expense date)
+        // is reported like any other bad group; the rest still import.
+        rejected.push({
+          group: group.group,
+          rows: group.rows,
+          reason: err instanceof HttpException ? (err.getResponse() as any).message : 'Failed to create claim',
+        });
+      }
+    }
+
+    return {
+      created,
+      rejected,
+      summary: {
+        groups: plan.groups.length + plan.rejected.length,
+        created: created.length,
+        rejected: rejected.length,
+      },
+    };
   }
 
   /** A second, different approver is required above this ex-GST total. */

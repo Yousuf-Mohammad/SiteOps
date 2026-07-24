@@ -1,4 +1,17 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -58,5 +71,31 @@ export class ClaimsController {
     return this.claims.reject((req as any).orgId, (req as any).user.id, id);
   }
 
-  // TODO: import
+  /**
+   * Bulk import of a LegacyPlant export.
+   *
+   * The CSV has no project column, so the project comes from the request and
+   * every claim in the file bills to it — one export, one job.
+   *
+   * Declared after the fixed routes but its literal path cannot collide with
+   * `:id`, which only matches a single segment.
+   */
+  @Post('import')
+  @Permissions('claims.create')
+  @UseInterceptors(FileInterceptor('file'))
+  import(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body('projectId') projectId: string,
+    @Req() req: Request,
+  ) {
+    if (!file) throw new BadRequestException('A CSV file is required (field name: file)');
+    if (!projectId) throw new BadRequestException('projectId is required');
+
+    return this.claims.importCsv(
+      (req as any).orgId,
+      (req as any).user.id,
+      projectId,
+      file.buffer.toString('utf8'),
+    );
+  }
 }
