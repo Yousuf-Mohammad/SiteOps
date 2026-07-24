@@ -101,7 +101,9 @@ export default function ClaimsPage() {
             <tbody>
               {claims.map((c) => (
                 <tr key={c.id}>
-                  <td>{c.reference}</td>
+                  <td>
+                    <Link href={`/claims/${c.id}`}>{c.reference}</Link>
+                  </td>
                   <td>{c.project?.code ?? '—'}</td>
                   <td>{c.expenseDate.slice(0, 10)}</td>
                   <td>

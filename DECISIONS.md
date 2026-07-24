@@ -167,6 +167,59 @@ returning 0% instead of throwing (3).
 
 ---
 
+## Phase 13 — Claim detail: two-key UI, timeline, and full reopen
+
+The last screen, and the one where the two-key rule has to become *legible* (`ASSESSMENT-BRIEF.md:60`). New
+`web/app/claims/[id]/page.tsx`, built on the `web/app/projects/[id]/page.tsx` shape. The Phase 11 list rows
+now link here — the link that phase deliberately deferred until the route existed.
+
+### What the page shows
+
+- **Line items** and a totals block: Total (ex-GST) from `claim.total`, then **GST (10%)** and
+  **inc-GST** *labelled "for reference"* — `ASSESSMENT-BRIEF.md:29` is explicit that nothing is stored or
+  thresholded inc-GST. GST is computed with `decimal.js` (half-up), never floats. The stored levy snapshot
+  (`levyRatePercent`, `levyAmount`, `fuelSubtotal`) is shown too, so the once-on-fuel maths is visible.
+- **A history timeline** from the `audit[]` array — every transition with the actor's name (mapped from the
+  `users` roster via `useActingUser`), a human label, and the `before → after` status. Audit is the full
+  trail and carries the actor for every transition, so it drives the timeline; `decisions[]` is used only for
+  the pending-key banner.
+- **The two-key state, made legible.** When `PARTIALLY_APPROVED`, a banner names who turned the first key —
+  derived from the `decisions` entry with `revision === claim.revision && decision === 'APPROVE'`. The
+  revision scope matters: after a reopen, a prior revision's decisions must not be read as the current pending
+  key. Verified live: Dan approves a $1,750 claim → "🔑 Dan Okafor turned the first key… awaiting a second,
+  different approver"; Carol (a different approver) finishes it → APPROVED, and the dashboard burn rose by
+  exactly $1,750.
+
+### Gating — permission *and* ownership, mirroring the server
+
+Approve/Reject show only when `can('claims.approve')` **and** the status is actionable **and**
+`actingId !== submitterId`. The self-dealing hide is a UI courtesy — the API enforces it regardless — but
+showing an approver a button that can only 403 on their own claim is a worse experience than not showing it.
+The `reports.burn` invalidation on a decision is the house rule (`CLAUDE.md` §7): approved claims feed burn,
+so the dashboard must be told. The `['claims']` prefix invalidation covers both the list and this detail
+query in one call.
+
+### Reopen, in full (the user's scope choice)
+
+A REJECTED claim, viewed by its **own submitter**, gets an inline "Correct and reopen" editor pre-filled with
+the claim's lines, a live total, and a submit that posts corrected lines to `/reopen`. Expense date and
+project are deliberately not editable — Phase 10 fixed them as the claim's identity (reference, FY, rate).
+Verified live: reopening the $500 claim at quantity 2 previewed $1,000 and stored a DRAFT revision 2 with
+that total.
+
+### The refactor that keeps two live totals identical
+
+The reopen editor and the Phase 12 new-claim form both need a line-array field editor with a live total.
+Rather than duplicate, both now use a shared `web/components/claim-line-fields.tsx` (`ClaimLineFields` +
+`TotalPreview`) and a shared `web/lib/claim-lines.ts` (`lineSchema`, `emptyLine`, `LEVY_RATE_PERCENT`,
+`linesToPayload`, `previewTotals`). The new-claim form was refactored onto them; the Phase 12 goldens were
+re-run in the browser afterwards ($67.47, $7.25) and the `web`↔`api` `computeTotals` parity check still
+matches, so the extraction changed no behaviour. One consequence worth noting: because both editors share
+`previewTotals`, there is now exactly *one* client-side total implementation, which is the strongest form of
+risk-14's "share or exactly mirror".
+
+---
+
 ## Phase 12 — New-claim form, with a total that matches the server
 
 Closes risk-log row 14. Rebuilds `web/app/claims/new/page.tsx` on the house pattern

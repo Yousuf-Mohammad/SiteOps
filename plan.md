@@ -209,7 +209,7 @@ no outbox event. Exposed and closed **risk 15**: decision uniqueness moved to
 
 ---
 
-## Phase 13 — Frontend: claim detail + decisions
+## Phase 13 — Frontend: claim detail + decisions — ✅ DONE
 🎯 The two-key flow is legible.
 ✏️ New `app/claims/[id]/page.tsx`: line items, ex-GST total with GST/inc-GST shown *for reference*, status badge, decision + audit **timeline**. Approve/Reject gated by `can('claims.approve')`; clear "X turned the first key — awaiting a second, different approver" messaging. After approval invalidate `claims` **and** `reports.burn`.
 ✅ **Gate:** approving a >$1,000 claim from the detail page shows PARTIALLY_APPROVED with pending-second-key state; a second approver completes it; burn dashboard reflects it.
