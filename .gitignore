@@ -4,5 +4,6 @@ dist/
 .env
 .env.local
 *.log
+*.tsbuildinfo
 ASSESSMENT-BRIEF.md
 WORKPLAN.md
