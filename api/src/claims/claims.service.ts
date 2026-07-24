@@ -1,11 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
+import { paginationMeta } from '../common/dto/pagination.dto';
 import { SequenceService } from '../common/sequence/sequence.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { fyForDate, resolveLevyRate } from './claim-fy';
+import { fyDateRange, fyForDate, resolveLevyRate } from './claim-fy';
 import { computeTotals } from './claim-totals';
 import { CreateClaimDto } from './dto/create-claim.dto';
+import { ListClaimsDto } from './dto/list-claims.dto';
 
 @Injectable()
 export class ClaimsService {
@@ -91,22 +93,63 @@ export class ClaimsService {
     });
   }
 
-  async findAll(orgId: string) {
-    return this.prisma.claim.findMany({
-      where: { orgId },
-      include: { lines: true, project: { select: { code: true, name: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
+  /**
+   * Paginated, filterable list for the acting org.
+   *
+   * Line items are deliberately not included — the list shows references and
+   * totals, and fanning out a join per row costs more than it returns. The
+   * detail endpoint carries them.
+   */
+  async list(orgId: string, query: ListClaimsDto) {
+    const where = {
+      orgId,
+      ...(query.status ? { status: query.status } : {}),
+      // FY is a date range over the expense date, never a string match on the
+      // reference — a reference is a label, the expense date is the fact.
+      ...(query.fy !== undefined ? { expenseDate: fyDateRange(query.fy) } : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.claim.findMany({
+        where,
+        include: { project: { select: { code: true, name: true } } },
+        // The id tiebreak keeps paging stable: without it, claims sharing an
+        // expenseDate can reorder between requests, so a row is seen twice or
+        // skipped entirely.
+        orderBy: [{ expenseDate: 'desc' }, { id: 'desc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.claim.count({ where }),
+    ]);
+
+    return { data, meta: paginationMeta(total, query) };
   }
 
-  async findOne(id: string) {
-    const claim = await this.prisma.claim.findUnique({
-      where: { id },
-      include: { lines: true },
+  /**
+   * Detail for one claim, scoped to the acting org.
+   *
+   * A claim belonging to another org 404s exactly as a nonexistent id does —
+   * anything else (403, or a different message) would confirm the id is real,
+   * which is itself a leak.
+   */
+  async findOne(orgId: string, id: string) {
+    const claim = await this.prisma.claim.findFirst({
+      where: { id, orgId },
+      include: {
+        lines: true,
+        decisions: { orderBy: { createdAt: 'asc' } },
+        project: { select: { code: true, name: true } },
+      },
     });
     if (!claim) {
       throw new NotFoundException(`Claim ${id} not found`);
     }
-    return claim;
+
+    // AuditLog has no relation to Claim, so it is fetched through the kernel
+    // service rather than joined.
+    const audit = await this.audit.forEntity(orgId, 'claim', id);
+
+    return { ...claim, audit };
   }
 }

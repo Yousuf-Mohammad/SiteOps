@@ -30,6 +30,22 @@ export function fyForDate(date: Date): number {
   return closingYear % 100;
 }
 
+/**
+ * The inverse of `fyForDate`: the date range a two-digit FY covers, as a
+ * half-open UTC interval. FY26 -> [2025-07-01, 2026-07-01).
+ *
+ * Half-open on purpose. An inclusive upper bound would need the last
+ * representable instant of 30 June, and any date stored with a time component
+ * would fall through the gap; `lt` the following 1 July has no such edge.
+ */
+export function fyDateRange(fy: number): { gte: Date; lt: Date } {
+  const closingYear = 2000 + fy;
+  return {
+    gte: new Date(Date.UTC(closingYear - 1, FY_START_MONTH_UTC, 1)),
+    lt: new Date(Date.UTC(closingYear, FY_START_MONTH_UTC, 1)),
+  };
+}
+
 /** Shape of a `SurchargeRate` row, structurally typed so Prisma stays out of this module. */
 export interface EffectiveRate {
   ratePercent: DecimalJs.Value;

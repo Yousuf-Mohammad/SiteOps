@@ -1,4 +1,4 @@
-import { fyForDate, resolveLevyRate } from './claim-fy';
+import { fyDateRange, fyForDate, resolveLevyRate } from './claim-fy';
 
 /** The rates the seed installs for every org (prisma/seed.ts:62-68). */
 const SEEDED_RATES = [
@@ -62,6 +62,47 @@ describe('fyForDate', () => {
         expect(fyForDate(new Date(iso))).toBeLessThan(100);
       }
     });
+  });
+});
+
+describe('fyDateRange', () => {
+  it('spans 1 July to the following 1 July', () => {
+    const { gte, lt } = fyDateRange(26);
+
+    expect(gte.toISOString()).toBe('2025-07-01T00:00:00.000Z');
+    expect(lt.toISOString()).toBe('2026-07-01T00:00:00.000Z');
+  });
+
+  it('is half-open: the upper bound is the next FY, not the last day of this one', () => {
+    const { lt } = fyDateRange(26);
+
+    expect(fyForDate(lt)).toBe(27);
+  });
+
+  it('round-trips with fyForDate at both ends', () => {
+    for (const fy of [24, 26, 27, 30]) {
+      const { gte, lt } = fyDateRange(fy);
+      const lastInstant = new Date(lt.getTime() - 1);
+
+      expect(fyForDate(gte)).toBe(fy);
+      expect(fyForDate(lastInstant)).toBe(fy);
+    }
+  });
+
+  it('brackets the boundary dates the brief calls out', () => {
+    const fy26 = fyDateRange(26);
+    const inRange = (d: string) =>
+      new Date(d) >= fy26.gte && new Date(d) < fy26.lt;
+
+    expect(inRange('2025-07-01')).toBe(true); // first day of FY26
+    expect(inRange('2026-02-10')).toBe(true);
+    expect(inRange('2026-06-30')).toBe(true); // last day of FY26
+    expect(inRange('2025-06-30')).toBe(false); // FY25
+    expect(inRange('2026-07-01')).toBe(false); // FY27
+  });
+
+  it('produces adjacent, non-overlapping ranges for consecutive years', () => {
+    expect(fyDateRange(26).lt.getTime()).toBe(fyDateRange(27).gte.getTime());
   });
 });
 

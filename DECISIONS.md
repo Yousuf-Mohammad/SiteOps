@@ -137,6 +137,58 @@ returning 0% instead of throwing (3).
 
 ---
 
+## Phase 5 — Org-scoped detail, paginated list
+
+Closes bugs 8, 9 and 11, and completes risk-log row 3. `create` is untouched.
+
+**The cross-tenant leak is closed.** `findOne` was `findUnique({ where: { id } })` with no `orgId`, and the
+controller never passed one. Now `findFirst({ where: { id, orgId } })` — `findUnique` cannot express a
+compound condition on a non-unique pair, so the method signature had to change too. Proven live: the exact
+request that returned `200` with pavecorp's `EXP 26-0101` to a roadco user now returns `404`.
+
+**A foreign claim 404s identically to a nonexistent one.** Returning 403, or a distinguishable message,
+would confirm the id is real — which is itself a leak. A test asserts both paths produce the same error code.
+
+**FY filtering is a date range over `expenseDate`, not a string match on the reference.** The reference is a
+label; the expense date is the fact, and the two could disagree if a reference were ever corrected. Added
+`fyDateRange(fy)` to `claim-fy.ts` as the inverse of `fyForDate`, returning a **half-open** UTC interval —
+FY26 → `[2025-07-01, 2026-07-01)`. Half-open avoids the classic bug: an inclusive upper bound needs the last
+representable instant of 30 June, and any expense stored with a time component falls through the gap.
+Unit tests assert both ends round-trip through `fyForDate` and that consecutive years are exactly adjacent.
+
+Verified live at the boundary: a claim dated `2026-06-30` appears under `fy=26` and gets `EXP 26-0004`;
+`2026-07-01` appears only under `fy=27` and gets `EXP 27-0001`.
+
+**Pagination orders by `expenseDate desc, id desc`.** The `id` tiebreak is load-bearing — without it, claims
+sharing an expense date can reorder between page requests, so a row is returned twice or skipped. A test
+walks all pages of a 7-claim set and asserts each id is seen exactly once. The starter ordered by
+`createdAt desc` alone. Page and count run in one `$transaction` (the `dockets.service.ts:25` pattern) so
+`meta.total` can't disagree with the page.
+
+**The list no longer embeds line items.** It returns references, statuses, the money snapshot and the
+project. Lines belong to the detail endpoint; fanning out a join per row for data no caller reads is waste.
+Non-breaking — the existing web list only reads reference, status, expenseDate, total and project.
+
+**Detail returns `lines`, `decisions` and `audit`.** `decisions` is a real relation since Phase 3, so it is
+included; `AuditLog` has no relation to `Claim`, so it comes from `AuditService.forEntity` rather than a
+hand-rolled query.
+
+**Filters are `status` + `fy` only.** `projectId` would mirror `ListDocketsDto` and is plausibly useful, but
+nothing in the brief asks for it and unused filters read as gold-plating.
+
+**Test rigour.** 18 new e2e tests. Removing `orgId` from the `findOne` where-clause — reinstating the exact
+starter bug — fails 2 of them.
+
+### A process note worth recording
+
+Reverting that mutation with `git checkout -- claims.service.ts` silently discarded the **uncommitted**
+Phase 5 work along with the mutation, because checkout restores from the last commit, not from a pre-mutation
+snapshot. The same mistake happened in Phase 2 with an untracked file. Mutation testing needs an explicit
+file backup, not `git checkout`, whenever the working tree holds uncommitted changes. Caught immediately
+because the suite went from 41 passing to reporting the old method signatures.
+
+---
+
 ## Phase 4 — Safe `create` + the e2e harness
 
 Closes risk-log rows 1, 3 (write half), 9 and 11, and retires bugs 1–7. First phase to touch

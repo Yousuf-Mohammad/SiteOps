@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { ClaimsService } from './claims.service';
 import { CreateClaimDto } from './dto/create-claim.dto';
+import { ListClaimsDto } from './dto/list-claims.dto';
 
 @Controller('claims')
 export class ClaimsController {
@@ -15,13 +16,15 @@ export class ClaimsController {
   }
 
   @Get()
-  findAll(@Req() req: Request) {
-    return this.claims.findAll((req as any).orgId);
+  list(@Query() query: ListClaimsDto, @Req() req: Request) {
+    return this.claims.list((req as any).orgId, query);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.claims.findOne(id);
+  findOne(@Param('id') id: string, @Req() req: Request) {
+    // orgId is not optional here — omitting it is what made any org's claim
+    // readable by id.
+    return this.claims.findOne((req as any).orgId, id);
   }
 
   // TODO: submit / approve / reject / import
