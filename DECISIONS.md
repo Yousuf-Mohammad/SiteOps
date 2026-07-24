@@ -45,6 +45,53 @@ a git repository, so no commit was made. Recorded here so the gap is a decision,
 
 ---
 
+## Phase 1 — Money (`claim-totals.ts`)
+
+Closes risk-log rows 2 and 6. New files: `api/src/claims/claim-totals.ts` + `claim-totals.spec.ts`.
+`claims.service.ts` is deliberately **not** touched — wiring it in is Phase 4's job, once the schema can
+store the result.
+
+**Decimal, not float.** The brief says "exact to the cent" and states the goldens to the cent, so the
+arithmetic has to be exact. `decimal.js` is the same library Prisma uses behind its `Decimal` columns, so
+Phase 4 can hand `result.total` straight to Prisma with no conversion. Depending on `decimal.js` directly
+rather than `Prisma.Decimal` keeps the function framework-free — no Prisma, no Nest, no clock.
+
+**The levy applies once, to the fuel subtotal.** The starter multiplied the *whole* claim by `1.125`
+(bug 3). Applying it per fuel line instead would still pass golden #1 and silently fail #2 — which is
+precisely why the brief includes #2. The rate is a parameter; resolving *which* rate applies to an expense
+date is Phase 2.
+
+**One rounding point, and the parts must sum.** Line extensions are exact (integer quantity × a 2dp price),
+so the only value needing rounding is the levy — `59.97 × 0.125 = 7.49625 → 7.50`. It is rounded *before*
+the total is summed, rather than rounding the total at the end. That is what makes the four returned amounts
+add up exactly, which matters from Phase 3 on, where all four are stored as separate columns and a reader
+has to be able to check the arithmetic. A test asserts the invariant across six different claims.
+
+Half-up is set on a **module-local `Decimal` clone**, not global config, so the rounding mode can't leak
+into or out of other code. Banker's rounding would send `0.005 → 0.00`; a test pins the half-up behaviour.
+
+**No input validation.** The function trusts its inputs. Rejecting negatives, zero quantities and
+over-precise prices is DTO work in Phase 4; keeping it out here leaves the function single-purpose.
+
+**Correction to `WORKPLAN.md:49`, which claims `3 * 19.99 = 59.970000000000006` in JS.** It does not —
+that expression is exactly `59.97` in IEEE-754 double. The float error in the starter's golden-#1 path
+comes from the *levy multiply* (`59.97 * 1.125 = 67.46625`), not the line extension. A test now pins a case
+where multiplication genuinely does drift (`7 × 13.37 = 93.58999999999999`) so the exactness claim rests on
+something true. Worth noting: golden #1 would have survived the float path by luck of rounding — it is
+golden #2 that actually fails, at `$7.875` against a required `$7.25`.
+
+### Starter gaps found while running the gate
+
+- **`npm run lint` does not work.** The script exists in `api/package.json:9` but `eslint` is not in
+  dependencies and there is no config file. Phase 14's gate requires lint to pass in both apps; that will
+  need either an eslint setup or an explicit note that the script was left as-found. Not fixed here —
+  adding lint tooling is outside the claims module.
+- `npm run typecheck` fails on a fresh host checkout until `npx prisma generate` has run — five errors in
+  starter files (`audit.service.ts`, `global-exception.filter.ts`, `reports.service.ts`) that are purely a
+  missing generated client. Clean after generating.
+
+---
+
 ## Starter audit (Phase 0.5)
 
 Read-only pass over `api/src/claims/` and `api/prisma/schema.prisma`. No code changed in this phase.
