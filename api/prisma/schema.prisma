@@ -53,20 +53,29 @@ model Claim {
   orgId       String
   projectId   String
   submitterId String
-  reference   String    @unique
+  reference   String
   status      String    @default("DRAFT")
   expenseDate DateTime
-  total       Float     @default(0)
+  total       Decimal   @default(0) @db.Decimal(12, 2)
+  // Levy inputs snapshotted at creation. A later rate change must not alter an
+  // already-lodged claim's total, so the rate is stored with the decision it
+  // priced — never recomputed from SurchargeRate on read.
+  levyRatePercent Decimal @default(0) @db.Decimal(5, 2)
+  fuelSubtotal    Decimal @default(0) @db.Decimal(12, 2)
+  levyAmount      Decimal @default(0) @db.Decimal(12, 2)
   approvedBy  String?
   approvedAt  DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  org       Organization @relation(fields: [orgId], references: [id])
-  project   Project      @relation(fields: [projectId], references: [id])
-  submitter User         @relation(fields: [submitterId], references: [id])
+  org       Organization    @relation(fields: [orgId], references: [id])
+  project   Project         @relation(fields: [projectId], references: [id])
+  submitter User            @relation(fields: [submitterId], references: [id])
   lines     ClaimLine[]
+  decisions ClaimDecision[]
 
+  // References are issued per-org, so two orgs may legitimately hold EXP 26-0001.
+  @@unique([orgId, reference])
   @@index([status, orgId])
 }
 
@@ -75,10 +84,25 @@ model ClaimLine {
   claimId     String
   description String
   quantity    Int
-  unitPrice   Float
+  unitPrice   Decimal @db.Decimal(12, 2)
   isFuel      Boolean @default(false)
 
   claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+}
+
+/// One approver, one decision. The unique constraint below is what physically
+/// stops the same person turning both keys on a two-key claim.
+model ClaimDecision {
+  id        String   @id @default(cuid())
+  claimId   String
+  actorId   String
+  decision  String
+  createdAt DateTime @default(now())
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@unique([claimId, actorId])
+  @@index([claimId])
 }
 
 model SurchargeRate {
@@ -88,6 +112,9 @@ model SurchargeRate {
   effectiveFrom DateTime
 
   org Organization @relation(fields: [orgId], references: [id])
+
+  // The effective-dated lookup: latest effectiveFrom <= expenseDate, per org.
+  @@index([orgId, effectiveFrom])
 }
 
 model NumberSequence {

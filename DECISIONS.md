@@ -137,6 +137,74 @@ returning 0% instead of throwing (3).
 
 ---
 
+## Phase 3 — Schema migration
+
+Closes risk-log rows 2 (storage half), 4 and 8. One migration:
+`20260724170000_decimal_money_levy_snapshot_claim_decisions`.
+
+| Change | Why |
+|---|---|
+| `Claim.total`, `ClaimLine.unitPrice` → `Decimal(12,2)` | Exact to the cent. The rest of the schema already used `Decimal` (`Equipment.hireRatePerDay`, `Docket.hours`) — claims was the outlier, so this is matching house style, not inventing it. |
+| `Claim.levyRatePercent Decimal(5,2)` | **The reproducibility fix.** Phase 2 showed the same lines total `67.47` at 12.5% and `65.97` at 10%. Without the rate stored, January's change silently rewrites a December claim — and burn figures the office already signed off. The rate is an input to a decision, so it is stored with the decision. |
+| `Claim.fuelSubtotal`, `Claim.levyAmount` | Make the total auditable. A reader can check `fuelSubtotal + nonFuel + levyAmount = total` without recomputing anything. Verified in SQL against all four seeded claims. |
+| New `ClaimDecision` + `@@unique([claimId, actorId])` | `approvedBy String?` cannot hold two approvers, so the two-key rule was structurally impossible. The unique constraint **is** the no-double-key guarantee, enforced by the database rather than by application logic. |
+| `Claim.reference`: drop global `@unique`, add `@@unique([orgId, reference])` | References are issued per-org, so two orgs must be able to hold `EXP 26-0001`. The global constraint made that impossible — and is exactly why the seed gave pavecorp `EXP 26-0101` instead. Proven both ways in SQL: cross-org insert succeeds, same-org duplicate is rejected. |
+| `SurchargeRate @@index([orgId, effectiveFrom])` | The precise shape of the effective-dated lookup. |
+
+**Snapshot columns are `NOT NULL DEFAULT 0`, not nullable.** Every claim must have an answer to "what rate
+was this priced at". Nullable would permit a claim with no answer; existing rows take the default during
+migration and are immediately replaced, since the seed deletes and recreates all claims.
+
+**`approvedBy` / `approvedAt` were kept.** `ClaimDecision` is now authoritative for who turned which key;
+the old columns remain as a denormalised "final approver" the seed already populates. Dropping them would be
+churn Phase 7 doesn't need.
+
+**One migration, not three.** Prisma runs each migration file in its own transaction, so a single additive
+migration already rolls back atomically and reads as one intent in the history.
+
+### Sequence keys are per-FY
+
+`claim:26`, `claim:27`, … not a single `claim` counter. The brief says the sequence is "per-org, **per-FY**",
+so numbering restarts each financial year — a single counter would make FY27's first claim `EXP 27-0007`.
+Seeded past the fixtures (roadco `claim:26` → 4, pavecorp → 102) because `SequenceService.next` self-heals
+from 1, which would have minted `EXP 26-0001` straight into a collision with a seeded claim.
+
+### The seed now proves the money rather than asserting it
+
+`seed.ts` imports `computeTotals` and `resolveLevyRate`, derives each claim's snapshot from its own lines and
+expense date, and **throws if the computed total disagrees with the hardcoded one**. All four fixtures pass
+unchanged, which independently confirms Phases 1–2 against data written before they existed. A silent
+divergence here would have every downstream test asserting against a fixture that was already wrong.
+Money literals are strings (`'88.40'`), so nothing round-trips through a float on the way in.
+
+### Knock-on changes outside `api/src/claims/`
+
+Two were unavoidable consequences of `total` becoming `Decimal`, both minimal and both recorded rather than
+made quietly:
+
+- **`reports/reports.service.ts:32`** — `Math.round(decimal * 100)` is a type error. Wrapped the aggregate in
+  `Number(...)` at that one boundary. Burn figures are display values, so the report keeps its number-based
+  API and its existing rounding. `plan.md:98` makes this part of the gate; verified `M7-RESURF` still reports
+  `approvedClaims: 67.47`.
+- **`web/app/claims/page.tsx:51`** — Prisma serialises `Decimal` to a JSON **string**, so `c.total.toFixed(2)`
+  would throw at runtime. Changed to `Number(c.total).toFixed(2)` and the type to `string | number`. Phase 11
+  rebuilds this screen anyway, but leaving the list page broken between phases was not acceptable.
+
+**API shape note for Phases 11–13:** `total`, `fuelSubtotal`, `levyAmount` and `levyRatePercent` now arrive as
+strings (`"67.47"`), and `Decimal.toString()` drops trailing zeros (`"187"`, not `"187.00"`). Formatting is the
+frontend's job.
+
+### Environment obstacle worth recording
+
+`npx prisma migrate dev` cannot run from the host on this machine: **two host PostgreSQL services (17 and 18)
+are running and one owns `0.0.0.0:5433`**, so Docker only obtained the IPv6 binding and `localhost:5433`
+reaches host Postgres, which has no `claims` user. Migrations are therefore generated and applied **inside the
+container** (`docker compose exec api npx prisma …`), which talks to `db:5432` directly; `prisma/` is
+bind-mounted so the generated files land on the host. `migrate dev` is also interactive when it detects column
+casts, so the SQL was produced with `prisma migrate diff --script` and applied with `migrate deploy`.
+
+---
+
 ## Starter audit (Phase 0.5)
 
 Read-only pass over `api/src/claims/` and `api/prisma/schema.prisma`. No code changed in this phase.

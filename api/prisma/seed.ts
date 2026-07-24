@@ -1,6 +1,14 @@
 import { PrismaClient } from '@prisma/client';
+import { computeTotals } from '../src/claims/claim-totals';
+import { fyForDate, resolveLevyRate } from '../src/claims/claim-fy';
 
 const prisma = new PrismaClient();
+
+/** The rates every org gets, mirrored here so claim snapshots can be derived. */
+const RATE_DEFS = [
+  { ratePercent: 10, effectiveFrom: new Date('2024-07-01') },
+  { ratePercent: 12.5, effectiveFrom: new Date('2026-01-01') },
+];
 
 async function main() {
   const roadco = await prisma.organization.upsert({
@@ -61,10 +69,7 @@ async function main() {
   for (const org of [roadco, pavecorp]) {
     await prisma.surchargeRate.deleteMany({ where: { orgId: org.id } });
     await prisma.surchargeRate.createMany({
-      data: [
-        { orgId: org.id, ratePercent: 10, effectiveFrom: new Date('2024-07-01') },
-        { orgId: org.id, ratePercent: 12.5, effectiveFrom: new Date('2026-01-01') },
-      ],
+      data: RATE_DEFS.map((r) => ({ orgId: org.id, ...r })),
     });
   }
 
@@ -140,36 +145,71 @@ async function main() {
   });
 
   await prisma.claim.deleteMany({});
+  // Money as strings so nothing round-trips through a float on the way in.
+  // `total` is stated here as the expected value; it is asserted against
+  // computeTotals below rather than trusted.
   const claimDefs = [
     {
       orgId: roadco.id, projectId: projects['M7-RESURF'].id, submitterId: users['alice'].id,
-      reference: 'EXP 26-0001', status: 'SUBMITTED', expenseDate: new Date('2026-02-10'), total: 457.35,
+      reference: 'EXP 26-0001', status: 'SUBMITTED', expenseDate: new Date('2026-02-10'), total: '457.35',
       lines: [
-        { description: 'Diesel for pavers', quantity: 3, unitPrice: 88.4, isFuel: true },
-        { description: 'Line-marking paint', quantity: 6, unitPrice: 26.5, isFuel: false },
+        { description: 'Diesel for pavers', quantity: 3, unitPrice: '88.40', isFuel: true },
+        { description: 'Line-marking paint', quantity: 6, unitPrice: '26.50', isFuel: false },
       ],
     },
     {
       orgId: roadco.id, projectId: projects['GLENN-RD'].id, submitterId: users['bob'].id,
-      reference: 'EXP 26-0002', status: 'DRAFT', expenseDate: new Date('2026-03-02'), total: 187.0,
-      lines: [{ description: 'Traffic cones (pack of 10)', quantity: 2, unitPrice: 93.5, isFuel: false }],
+      reference: 'EXP 26-0002', status: 'DRAFT', expenseDate: new Date('2026-03-02'), total: '187.00',
+      lines: [{ description: 'Traffic cones (pack of 10)', quantity: 2, unitPrice: '93.50', isFuel: false }],
     },
     {
       orgId: roadco.id, projectId: projects['M7-RESURF'].id, submitterId: users['bob'].id,
-      reference: 'EXP 26-0003', status: 'APPROVED', expenseDate: new Date('2026-01-18'), total: 67.47,
+      reference: 'EXP 26-0003', status: 'APPROVED', expenseDate: new Date('2026-01-18'), total: '67.47',
       approvedBy: users['carol'].id, approvedAt: new Date('2026-01-20'),
-      lines: [{ description: 'Unleaded for gen-set', quantity: 3, unitPrice: 19.99, isFuel: true }],
+      lines: [{ description: 'Unleaded for gen-set', quantity: 3, unitPrice: '19.99', isFuel: true }],
     },
     {
       orgId: pavecorp.id, projectId: projects['PAC-HWY'].id, submitterId: users['eve'].id,
-      reference: 'EXP 26-0101', status: 'SUBMITTED', expenseDate: new Date('2026-04-05'), total: 315.0,
-      lines: [{ description: 'Formply sheets', quantity: 7, unitPrice: 45.0, isFuel: false }],
+      reference: 'EXP 26-0101', status: 'SUBMITTED', expenseDate: new Date('2026-04-05'), total: '315.00',
+      lines: [{ description: 'Formply sheets', quantity: 7, unitPrice: '45.00', isFuel: false }],
     },
   ];
   for (const c of claimDefs) {
-    const { lines, ...claim } = c;
-    await prisma.claim.create({ data: { ...claim, lines: { create: lines } } });
+    const { lines, total: expectedTotal, ...claim } = c;
+
+    // Derive the levy snapshot the same way the service will, and refuse to seed
+    // money that disagrees with the rules. A silent divergence here would make
+    // every downstream test assert against a fixture that is already wrong.
+    const levyRatePercent = resolveLevyRate(RATE_DEFS, claim.expenseDate);
+    const totals = computeTotals(lines, levyRatePercent);
+    if (totals.total.toFixed(2) !== expectedTotal) {
+      throw new Error(
+        `Seed total mismatch for ${claim.reference}: expected ${expectedTotal}, computed ${totals.total.toFixed(2)}`,
+      );
+    }
+
+    await prisma.claim.create({
+      data: {
+        ...claim,
+        total: totals.total.toFixed(2),
+        levyRatePercent: levyRatePercent.toFixed(2),
+        fuelSubtotal: totals.fuelSubtotal.toFixed(2),
+        levyAmount: totals.levyAmount.toFixed(2),
+        lines: { create: lines },
+      },
+    });
   }
+
+  // Claim references are issued per-org, per-FY. Start each counter past the
+  // fixtures above so the first real create doesn't collide with a seeded
+  // reference (SequenceService would otherwise self-heal from 1).
+  const claimFy = fyForDate(new Date('2026-02-10')); // 26 — the FY all fixtures sit in
+  await prisma.numberSequence.createMany({
+    data: [
+      { orgId: roadco.id, key: `claim:${claimFy}`, nextValue: 4 },
+      { orgId: pavecorp.id, key: `claim:${claimFy}`, nextValue: 102 },
+    ],
+  });
 
   console.log('Seed complete: 2 orgs, 5 users, 5 projects, 5 equipment, 5 dockets, 4 claims, 2 notes.');
 }
