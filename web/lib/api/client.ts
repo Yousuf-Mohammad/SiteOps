@@ -25,7 +25,18 @@ export function getOrgId(): string {
   return process.env.NEXT_PUBLIC_FAKE_ORG_ID ?? '';
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<{ data: T; meta?: any }> {
+/** Shape the API's pagination envelope uses — see `paginationMeta` on the server. */
+export interface PaginationMeta {
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+}
+
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<{ data: T; meta?: PaginationMeta }> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {

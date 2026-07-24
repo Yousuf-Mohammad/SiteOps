@@ -1,4 +1,5 @@
 import { fyDateRange, fyForDate, resolveLevyRate } from './claim-fy';
+import { computeTotals } from './claim-totals';
 
 /** The rates the seed installs for every org (prisma/seed.ts:62-68). */
 const SEEDED_RATES = [
@@ -186,8 +187,6 @@ describe('resolveLevyRate', () => {
 
   describe('feeding Phase 1', () => {
     it('drives golden #1 end to end: the 2026-01-18 rate produces 67.47', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { computeTotals } = require('./claim-totals');
       const rate = resolveLevyRate(SEEDED_RATES, new Date('2026-01-18'));
       const totals = computeTotals([{ quantity: 3, unitPrice: '19.99', isFuel: true }], rate);
 
@@ -195,8 +194,6 @@ describe('resolveLevyRate', () => {
     });
 
     it('the same lines dated before the rate change total 65.97 at 10%', () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { computeTotals } = require('./claim-totals');
       const rate = resolveLevyRate(SEEDED_RATES, new Date('2025-12-31'));
       const totals = computeTotals([{ quantity: 3, unitPrice: '19.99', isFuel: true }], rate);
 

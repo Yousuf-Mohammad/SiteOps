@@ -82,13 +82,38 @@ golden #2 that actually fails, at `$7.875` against a required `$7.25`.
 
 ### Starter gaps found while running the gate
 
-- **`npm run lint` does not work.** The script exists in `api/package.json:9` but `eslint` is not in
-  dependencies and there is no config file. Phase 14's gate requires lint to pass in both apps; that will
-  need either an eslint setup or an explicit note that the script was left as-found. Not fixed here —
-  adding lint tooling is outside the claims module.
+- **`npm run lint` did not work in either app.** Both `package.json` files shipped a `lint` script but
+  neither had ESLint installed and there was no config anywhere in the repo. Fixed after Phase 5 — see
+  "Lint tooling" below.
 - `npm run typecheck` fails on a fresh host checkout until `npx prisma generate` has run — five errors in
   starter files (`audit.service.ts`, `global-exception.filter.ts`, `reports.service.ts`) that are purely a
   missing generated client. Clean after generating.
+
+### Lint tooling (added after Phase 5)
+
+`api` and `web` both advertised a `lint` script that could not run: `eslint` was absent from both dependency
+lists and no config file existed. Phase 14's gate requires lint to pass in both apps, so this was fixed
+rather than documented as a known gap.
+
+**api** — ESLint 9 flat config (`api/eslint.config.mjs`) on `typescript-eslint` recommended, with two
+deliberate relaxations. `no-explicit-any` is a **warning**, not an error: the kernel's own documented usage
+is `audit.record(entry, tx as any)` and every finished controller reads `(req as any).orgId`, so making it
+an error would either fail the build on starter code or force 30-odd casts that add nothing.
+`no-unused-vars` ignores `_`-prefixed arguments, which is how Nest signals a required-but-unused signature
+parameter (`ResponseInterceptor`'s `_ctx`). Result: **0 errors, 33 warnings**, all of them the starter's
+existing `any` usage. The script now also covers `test/**`, which it previously skipped.
+
+**web** — `next/core-web-vitals` + `next/typescript` via `FlatCompat`. Two fixes were needed to get to zero:
+`next-env.d.ts` is ignored (Next regenerates it every build and its triple-slash reference is Next's own,
+not ours), and `lib/api/client.ts:28` had a genuine `any` on the pagination envelope — replaced with an
+exported `PaginationMeta` interface, which Phase 11's pager will need anyway.
+
+The script changed from `next lint` to `eslint .`: **`next lint` is deprecated and removed in Next 16**, and
+calling the CLI directly is the migration Next itself recommends. It also drops a spurious "multiple
+lockfiles" warning that `next lint` emitted because of an unrelated `package-lock.json` in the user's home
+directory.
+
+Both now exit 0, on the host and inside the containers.
 
 ---
 
