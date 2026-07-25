@@ -18,6 +18,7 @@ Claims module only — `api/src/claims/`, its schema models, `web/app/claims/`.
 - Half-up rounding is applied using a module-local `Decimal` clone, so the rounding mode cannot leak into other code. The library default is half-even, which would send `0.005` to `0.00`.
 - The levy is applied **once** to the fuel subtotal, then rounded once before calculating the final total — not per line and not across the whole claim. Golden example #1 passes under all three readings; #2 fails the wrong two by a cent.
 - Financial year is derived from `expenseDate` using UTC accessors. Dates are stored as UTC midnight, so local accessors read 1 July as 30 June west of Greenwich — exactly the FY boundary.
+- The web preview mirrors `computeTotals` line-for-line (`web/lib/claim-totals.ts`) rather than importing it, since the two packages do not share a build. The duplication is deliberate and flagged in the file header; the preview also resolves the levy rate for the expense date through `GET /claims/levy-rate`, so it matches the stored total for any date rather than only today's. **Next step:** extract both into a shared workspace package so the copy cannot drift.
 
 *Why: This guarantees exact monetary calculations, ensures the stored values always reconcile, and prevents incorrect financial years caused by entry date or timezone differences.*
 
@@ -63,8 +64,10 @@ Claims module only — `api/src/claims/`, its schema models, `web/app/claims/`.
 
 - Real authentication, file storage, and email notifications.
 - CRUD screens for seeded reference data (organizations, users, projects, equipment).
-- CSV import UI (the API endpoint was implemented as required).
+- CSV import UI (the API endpoint was implemented as required). **Next:** a thin upload screen reusing the existing endpoint and rendering its per-group rejection report.
+- **Frontend tests.** Testing effort went where the money and the concurrency are — 101 unit and 132 e2e tests on the API, the latter against a real Postgres. The web layer is verified in a browser (rendered DOM and console, not status codes), because a component test would not have caught the two bugs that actually occurred there: a `Decimal`-as-string crash and a stale Docker build. **Next:** React Testing Library on the line-item editor, and a committed parity test asserting the web and api total functions agree.
 - The fake-auth middleware does not bind the acting user to the supplied `x-org-id`; correcting that is real authentication.
+- Read endpoints carry no permission: no seeded user holds `claims.read`, so enforcing an invented one would deny every user. `NotesController` is the precedent — guard at class level, rely on org scoping.
 - `GET /claims` omits line items — the detail endpoint carries them.
 
 *Why: These items are outside the assessment scope or explicitly marked as optional. Tenant isolation is still enforced within the Claims module by filtering every query by `orgId`, which is precisely why the data layer cannot rely on the auth layer.*

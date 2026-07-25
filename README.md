@@ -9,7 +9,7 @@ Multi-tenant operations platform for road-works contractors. Projects, equipment
   - `src/audit/` — audit-trail service
   - `src/outbox/` — transactional outbox (dev relay logs deliveries)
   - `src/projects/`, `src/equipment/`, `src/dockets/`, `src/notes/`, `src/reports/` — platform modules
-  - `src/claims/` — expense claims module (in progress)
+  - `src/claims/` — expense claims module (lifecycle, two-key approval, reopen, CSV import)
   - `src/users/` — org members (used by the dev user-switcher)
 - `web/` — Next.js App Router + TypeScript + TanStack React Query
   - `app/dashboard`, `app/projects`, `app/equipment`, `app/dockets`, `app/claims` — feature screens

@@ -7,7 +7,7 @@ Legend: 🎯 goal · ✏️ changes · ✅ gate (how you prove it works)
 
 ---
 
-## Phase 0 — Baseline & orientation
+## Phase 0 — Baseline & orientation — ✅ DONE
 🎯 Confirm the starter runs and read the answer key.
 ✏️ `docker compose up -d --build`. Read `dockets.service.ts`, `dockets.controller.ts`, `sequence.service.ts`, `reports.service.ts`.
 ✅ **Gate:** `curl -s localhost:3100/api/claims -H "x-org-id: <roadco>" -H "x-user-id: <alice>"` returns seeded claims; web dashboard loads at :3000; confirm a DRAFT docket in the UI and watch the burn number move.
@@ -59,13 +59,13 @@ with the reopen flow, which nothing could reach while `REJECTED` was terminal.
 Rows 4, 5, 8, 10, 13 carry no bug number — that functionality doesn't exist in the starter yet, so there is
 nothing to be wrong. *Row 14 cites `WORKPLAN.md` item 14 (web screens); the Phase 0.5 inventory covers the API only.
 
-✅ **Gate:** table written to `DECISIONS.md`. 📝 Commit `docs: risk log` **skipped — this folder is not a git
-repository**. Every phase completed before `git init` collapses into a single undifferentiated baseline, and
-`plan.md` treats commit history as graded. Initialize before Phase 1 if that history matters.
+✅ **Gate:** table written to `DECISIONS.md`. 📝 Commit `docs: risk log` **not made separately** — at this point
+the working folder was not yet a git repository. `git init` happened before Phase 1, so every phase from there
+on carries its own commit; only this planning gate is absent from the history.
 
 ---
 
-## Phase 1 — Pure money function (TDD, no DB, no framework)
+## Phase 1 — Pure money function (TDD, no DB, no framework) — ✅ DONE
 🎯 Exact ex-GST totals with the levy applied once on the fuel subtotal. **Do this before touching the DB.**
 ✏️ **Write the failing spec first** → implement → green (classic TDD). Add `decimal.js`. Create `api/src/claims/claim-totals.ts`:
 ```
@@ -81,7 +81,7 @@ computeTotals(lines: {quantity, unitPrice, isFuel}[], levyRatePercent)
 
 ---
 
-## Phase 2 — FY & levy-rate helpers (pure)
+## Phase 2 — FY & levy-rate helpers (pure) — ✅ DONE
 🎯 Derive FY and the effective-dated rate from an expense date.
 ✏️ `fyForDate(date) -> number` (2-digit, 1 Jul boundary) and a resolver that picks the `SurchargeRate` whose
 `effectiveFrom` is the latest `<= expenseDate` for the org.
@@ -90,7 +90,7 @@ computeTotals(lines: {quantity, unitPrice, isFuel}[], levyRatePercent)
 
 ---
 
-## Phase 3 — Schema migration
+## Phase 3 — Schema migration — ✅ DONE
 🎯 Make the data model able to hold correct money, a rate snapshot, and two keys.
 ✏️ One migration + `schema.prisma`:
 - `Claim.total`, `ClaimLine.unitPrice` → `Decimal @db.Decimal(12,2)`
@@ -107,7 +107,7 @@ computeTotals(lines: {quantity, unitPrice, isFuel}[], levyRatePercent)
 
 ---
 
-## Phase 4 — Wire module deps + fix `create`
+## Phase 4 — Wire module deps + fix `create` — ✅ DONE
 🎯 Claims service can use the kernel; creation is correct and safe.
 ✏️ `claims.module.ts`: import Sequence/Audit/Outbox modules, inject into service. Rewrite `create`:
 drop `status` from DTO (always `DRAFT`), org-validate `projectId`, inside a transaction take `sequence.next(tx, orgId, 'claim')`,
@@ -124,7 +124,7 @@ already expects but is missing) + a Nest bootstrap using `@nestjs/testing` + `su
 
 ---
 
-## Phase 5 — Fix reads (`findOne`, `findAll`)
+## Phase 5 — Fix reads (`findOne`, `findAll`) — ✅ DONE
 🎯 Close the cross-tenant leak; make listing paginated + filterable.
 ✏️ `findOne(orgId, id)` → `where: { id, orgId }`, include lines + decisions + audit history; 404 if not found in org.
 `ListClaimsDto extends PaginationDto` with `status` + `fy`; FY filter → expense-date range; return `{ data, meta: paginationMeta(...) }`.
@@ -134,7 +134,7 @@ detail response includes decision + audit arrays.
 
 ---
 
-## Phase 6 — `submit` (lodgment)
+## Phase 6 — `submit` (lodgment) — ✅ DONE
 🎯 Only the submitter can lodge their own DRAFT.
 ✏️ Conditional `updateMany({ where: { id, orgId, status: 'DRAFT', submitterId: actorId } })`; `count===0` → 404/409 with a clear reason; audit `claim.submitted`.
 ✅ **Gate:** submitter DRAFT→SUBMITTED works; a non-submitter gets denied; submitting a non-DRAFT → 409.
@@ -142,7 +142,7 @@ detail response includes decision + audit arrays.
 
 ---
 
-## Phase 7 — `approve` / `reject` (the centrepiece)
+## Phase 7 — `approve` / `reject` (the centrepiece) — ✅ DONE
 🎯 Two-key rule, no self-dealing, final and race-safe.
 ✏️ In one transaction: reject self-dealing (`submitterId === actorId` → 403); insert `ClaimDecision` (the unique
 `(claimId, actorId)` blocks the same person turning both keys); conditional `updateMany` with the expected current status:
@@ -157,7 +157,7 @@ Audit every transition; `outbox.enqueue(tx, 'claim.approved')` **only on final A
 
 ---
 
-## Phase 8 — Controller guards & endpoints
+## Phase 8 — Controller guards & endpoints — ✅ DONE
 🎯 Permissions enforced; full endpoint surface.
 ✏️ `@UseGuards(PermissionsGuard)`; `@Permissions('claims.create')` on create/submit, `'claims.approve'` on approve/reject.
 Wire routes: `POST /claims`, `GET /claims`, `GET /claims/:id`, `POST /claims/:id/submit|approve|reject`.
@@ -166,7 +166,7 @@ Wire routes: `POST /claims`, `GET /claims`, `GET /claims/:id`, `POST /claims/:id
 
 ---
 
-## Phase 9 — CSV import
+## Phase 9 — CSV import — ✅ DONE
 🎯 `POST /claims/import`, best-effort per claim.
 ✏️ Real CSV parse (handles quoted `"1,299.50"`); group rows by `group`; validate each group; create valid claims (reusing Phase 4 logic);
 collect `{ rows: number[], reason }` for invalid groups; return created + rejected in one enveloped response. One bad line rejects that whole claim only.
