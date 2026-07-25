@@ -4,10 +4,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Decimal from 'decimal.js';
 import Link from 'next/link';
-import { use } from 'react';
+import { use, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { ClaimLineFields, TotalPreview } from '../../../components/claim-line-fields';
+import { ConfirmDialog } from '../../../components/confirm-dialog';
 import { ApiError, apiGet, apiPost } from '../../../lib/api/client';
 import { lineSchema, linesToPayload, type ClaimLineInput } from '../../../lib/claim-lines';
 import { queryKeys } from '../../../lib/query/keys';
@@ -60,6 +61,8 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
   const { id } = use(params);
   const queryClient = useQueryClient();
   const { user, users, can } = useActingUser();
+  // Which action is awaiting confirmation, if any.
+  const [pending, setPending] = useState<'submit' | 'approve' | 'reject' | null>(null);
 
   const query = useQuery({
     queryKey: queryKeys.claims.detail(id),
@@ -73,7 +76,11 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
   // list.
   const submit = useMutation({
     mutationFn: () => apiPost(`/claims/${id}/submit`, {}),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.claims.all }),
+    onSuccess: () => {
+      setPending(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.claims.all });
+    },
+    onError: () => setPending(null),
   });
 
   // Approve/reject both change claim lists and, on final approval, the burn
@@ -82,10 +89,18 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
   const decide = useMutation({
     mutationFn: (action: 'approve' | 'reject') => apiPost(`/claims/${id}/${action}`, {}),
     onSuccess: () => {
+      setPending(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.claims.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.reports.burn });
     },
+    onError: () => setPending(null),
   });
+
+  // Run the confirmed action from the dialog, never straight from a button.
+  const runPending = () => {
+    if (pending === 'submit') submit.mutate();
+    else if (pending) decide.mutate(pending);
+  };
 
   if (query.isPending) return <p className="muted">Loading…</p>;
   if (query.isError) return <p style={{ color: 'var(--danger)' }}>{(query.error as Error).message}</p>;
@@ -200,7 +215,7 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
 
       {canSubmit && (
         <div className="card" style={{ padding: 16, marginTop: 16 }}>
-          <button className="primary" disabled={submit.isPending} onClick={() => submit.mutate()}>
+          <button className="success" disabled={submit.isPending} onClick={() => setPending('submit')}>
             {submit.isPending ? 'Submitting…' : 'Submit for approval'}
           </button>
           {submit.isError && (
@@ -222,13 +237,13 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
       {canDecide && (
         <div className="card" style={{ padding: 16, marginTop: 16 }}>
           <button
-            className="primary"
+            className="success"
             disabled={decide.isPending}
-            onClick={() => decide.mutate('approve')}
+            onClick={() => setPending('approve')}
           >
             Approve
           </button>{' '}
-          <button disabled={decide.isPending} onClick={() => decide.mutate('reject')}>
+          <button className="danger" disabled={decide.isPending} onClick={() => setPending('reject')}>
             Reject
           </button>
           {decide.isError && (
@@ -246,6 +261,29 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
       <p style={{ marginTop: 16 }}>
         <Link href="/claims">← Back to claims</Link>
       </p>
+
+      <ConfirmDialog
+        open={pending !== null}
+        title={
+          pending === 'submit'
+            ? `Submit ${claim.reference}?`
+            : pending === 'approve'
+              ? `Approve ${claim.reference}?`
+              : `Reject ${claim.reference}?`
+        }
+        message={
+          pending === 'submit'
+            ? 'This lodges the claim for approval.'
+            : pending === 'approve'
+              ? 'This records your approval.'
+              : 'This rejects the claim.'
+        }
+        confirmLabel={pending === 'submit' ? 'Submit' : pending === 'approve' ? 'Approve' : 'Reject'}
+        tone={pending === 'reject' ? 'danger' : 'success'}
+        busy={submit.isPending || decide.isPending}
+        onConfirm={runPending}
+        onCancel={() => setPending(null)}
+      />
     </>
   );
 }

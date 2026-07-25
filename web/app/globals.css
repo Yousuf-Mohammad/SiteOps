@@ -7,6 +7,7 @@
   --accent: #1f5eff;
   --accent-soft: #e8eeff;
   --danger: #c0392b;
+  --success: #1b7f3d;
   --radius: 8px;
 }
 
@@ -102,7 +103,24 @@ button, .btn {
   cursor: pointer;
 }
 button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Positive lifecycle actions (submit, approve) read green; reject reads red. */
+button.success, .btn.success { background: var(--success); border-color: var(--success); color: #fff; }
+button.danger, .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 button:disabled { opacity: 0.5; cursor: default; }
+
+/* Confirmation dialog: an in-app modal (not window.confirm) so a decision is a
+   deliberate two-step, and so it stays legible + testable. */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(16, 24, 40, 0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.modal {
+  background: var(--surface); border-radius: var(--radius);
+  padding: 20px; max-width: 380px; width: calc(100% - 32px);
+  box-shadow: 0 10px 40px rgba(16, 24, 40, 0.25);
+}
+.modal h3 { margin: 0 0 8px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
 select, input {
   font: inherit;

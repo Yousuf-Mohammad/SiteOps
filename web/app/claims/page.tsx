@@ -3,9 +3,13 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
+import { ConfirmDialog } from '../../components/confirm-dialog';
 import { ApiError, apiGet, apiPost } from '../../lib/api/client';
 import { queryKeys } from '../../lib/query/keys';
 import { useActingUser } from '../../lib/use-acting-user';
+
+type PendingAction = { action: 'submit' | 'approve' | 'reject'; claim: Claim };
+const ACTION_VERB = { submit: 'Submit', approve: 'Approve', reject: 'Reject' } as const;
 
 type Decision = { actorId: string; revision: number };
 type Claim = {
@@ -35,6 +39,8 @@ export default function ClaimsPage() {
   // controlled while empty.
   const [fy, setFy] = useState('');
   const [rowError, setRowError] = useState<string | null>(null);
+  // The action awaiting confirmation. null = no dialog open.
+  const [pending, setPending] = useState<PendingAction | null>(null);
 
   const { user, can } = useActingUser();
   const queryClient = useQueryClient();
@@ -56,20 +62,35 @@ export default function ClaimsPage() {
     mutationFn: (id: string) => apiPost(`/claims/${id}/submit`, {}),
     onSuccess: () => {
       setRowError(null);
+      setPending(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.claims.all });
     },
-    onError: (err) => setRowError(err instanceof ApiError ? err.message : 'Submit failed'),
+    onError: (err) => {
+      setPending(null);
+      setRowError(err instanceof ApiError ? err.message : 'Submit failed');
+    },
   });
   const decide = useMutation({
     mutationFn: (v: { id: string; action: 'approve' | 'reject' }) =>
       apiPost(`/claims/${v.id}/${v.action}`, {}),
     onSuccess: () => {
       setRowError(null);
+      setPending(null);
       queryClient.invalidateQueries({ queryKey: queryKeys.claims.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.reports.burn });
     },
-    onError: (err) => setRowError(err instanceof ApiError ? err.message : 'Decision failed'),
+    onError: (err) => {
+      setPending(null);
+      setRowError(err instanceof ApiError ? err.message : 'Decision failed');
+    },
   });
+
+  // Fire the confirmed action. Called from the dialog, never directly from a row.
+  const runPending = () => {
+    if (!pending) return;
+    if (pending.action === 'submit') submit.mutate(pending.claim.id);
+    else decide.mutate({ id: pending.claim.id, action: pending.action });
+  };
 
   const claims = data?.data ?? [];
   const meta = data?.meta as Meta | undefined;
@@ -150,8 +171,6 @@ export default function ClaimsPage() {
             <tbody>
               {claims.map((c) => {
                 const { canSubmit, canDecide } = actionsFor(c);
-                const submitting = submit.isPending && submit.variables === c.id;
-                const deciding = decide.isPending && decide.variables?.id === c.id;
                 return (
                   <tr key={c.id}>
                     <td>
@@ -166,31 +185,28 @@ export default function ClaimsPage() {
                     <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                       {canSubmit && (
                         <button
-                          className="primary"
+                          className="success"
                           disabled={busy}
-                          onClick={() => submit.mutate(c.id)}
+                          onClick={() => setPending({ action: 'submit', claim: c })}
                         >
-                          {submitting ? 'Submitting…' : 'Submit'}
+                          Submit
                         </button>
                       )}
                       {canDecide && (
                         <>
                           <button
-                            className="primary"
+                            className="success"
                             disabled={busy}
-                            onClick={() => decide.mutate({ id: c.id, action: 'approve' })}
+                            onClick={() => setPending({ action: 'approve', claim: c })}
                           >
-                            {deciding && decide.variables?.action === 'approve'
-                              ? 'Approving…'
-                              : 'Approve'}
+                            Approve
                           </button>
                           <button
+                            className="danger"
                             disabled={busy}
-                            onClick={() => decide.mutate({ id: c.id, action: 'reject' })}
+                            onClick={() => setPending({ action: 'reject', claim: c })}
                           >
-                            {deciding && decide.variables?.action === 'reject'
-                              ? 'Rejecting…'
-                              : 'Reject'}
+                            Reject
                           </button>
                         </>
                       )}
@@ -222,6 +238,23 @@ export default function ClaimsPage() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!pending}
+        title={pending ? `${ACTION_VERB[pending.action]} ${pending.claim.reference}?` : ''}
+        message={
+          pending?.action === 'reject'
+            ? 'This rejects the claim.'
+            : pending?.action === 'approve'
+              ? 'This records your approval.'
+              : 'This lodges the claim for approval.'
+        }
+        confirmLabel={pending ? ACTION_VERB[pending.action] : ''}
+        tone={pending?.action === 'reject' ? 'danger' : 'success'}
+        busy={busy}
+        onConfirm={runPending}
+        onCancel={() => setPending(null)}
+      />
     </>
   );
 }
