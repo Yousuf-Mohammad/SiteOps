@@ -41,6 +41,17 @@ export class ClaimsController {
     return this.claims.list((req as any).orgId, query);
   }
 
+  /**
+   * The effective-dated levy rate for a date, so the new-claim form can preview
+   * the same total the server will store. Declared **before** `:id` — a literal
+   * path must be matched ahead of the single-segment wildcard, or `levy-rate`
+   * reads as a claim id.
+   */
+  @Get('levy-rate')
+  levyRate(@Query('date') date: string, @Req() req: Request) {
+    return this.claims.getLevyRate((req as any).orgId, date);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @Req() req: Request) {
     // orgId is not optional here — omitting it is what made any org's claim

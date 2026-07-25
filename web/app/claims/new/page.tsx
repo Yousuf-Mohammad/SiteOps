@@ -3,11 +3,11 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 import { ClaimLineFields, TotalPreview } from '../../../components/claim-line-fields';
 import { ApiError, apiGet, apiPost } from '../../../lib/api/client';
-import { emptyLine, lineSchema, linesToPayload } from '../../../lib/claim-lines';
+import { emptyLine, lineSchema, linesToPayload, LEVY_RATE_PERCENT } from '../../../lib/claim-lines';
 import { queryKeys } from '../../../lib/query/keys';
 
 const claimSchema = z.object({
@@ -38,6 +38,18 @@ export default function NewClaimPage() {
     resolver: zodResolver(claimSchema),
     defaultValues: { projectId: '', expenseDate: '', lines: [{ ...emptyLine }] },
   });
+
+  // The levy rate is effective-dated on the expense date, so resolve it from the
+  // server as the date changes — the preview then matches the stored total for
+  // any date, not just today's rate. Falls back to the current rate until a date
+  // is picked.
+  const expenseDate = useWatch({ control, name: 'expenseDate' });
+  const levyRate = useQuery({
+    queryKey: queryKeys.claims.levyRate(expenseDate),
+    queryFn: () => apiGet<{ ratePercent: string }>(`/claims/levy-rate?date=${expenseDate}`),
+    enabled: !!expenseDate,
+  });
+  const ratePercent = levyRate.data?.data.ratePercent ?? LEVY_RATE_PERCENT;
 
   const create = useMutation({
     mutationFn: (values: ClaimForm) =>
@@ -87,7 +99,7 @@ export default function NewClaimPage() {
 
           <ClaimLineFields control={control} register={register} errors={errors} />
 
-          <TotalPreview control={control} />
+          <TotalPreview control={control} ratePercent={ratePercent} />
 
           {errors.lines?.message && <p style={{ color: 'var(--danger)' }}>{errors.lines.message}</p>}
           {errors.root && <p style={{ color: 'var(--danger)' }}>{errors.root.message}</p>}

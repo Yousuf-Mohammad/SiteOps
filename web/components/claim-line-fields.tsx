@@ -33,13 +33,20 @@ type LineErrors = Array<{
  * mirror. Isolated in its own component so it re-renders on keystroke without
  * dragging the whole form with it.
  */
-export function TotalPreview<T extends LinesForm>({ control }: { control: Control<T> }) {
+export function TotalPreview<T extends LinesForm>({
+  control,
+  ratePercent = LEVY_RATE_PERCENT,
+}: {
+  control: Control<T>;
+  /** Effective-dated levy rate for the claim's expense date (or the snapshot on reopen). */
+  ratePercent?: number | string;
+}) {
   const lines = (useWatch({ control, name: 'lines' as Path<T> }) as ClaimLineInput[] | undefined) ?? [];
-  const totals = previewTotals(lines);
+  const totals = previewTotals(lines, ratePercent);
 
   return (
     <div className="total-preview">
-      Fuel levy ({LEVY_RATE_PERCENT}%): ${totals.levyAmount.toFixed(2)}
+      Fuel levy ({Number(ratePercent)}%): ${totals.levyAmount.toFixed(2)}
       <br />
       Total (ex-GST): ${totals.total.toFixed(2)}
     </div>

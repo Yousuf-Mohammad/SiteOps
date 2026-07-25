@@ -1,11 +1,10 @@
 import { z } from 'zod';
 import { computeTotals } from './claim-totals';
 
-// The levy rate in force since 2026-01-01. The server resolves the rate from the
-// expense date against SurchargeRate, which no endpoint exposes; the preview
-// assumes the current rate rather than adding one. A fuel expense back-dated
-// before 2026-01-01 previews at 12.5% while the server stores 10% — the created
-// claim is always correct because the server recomputes. (See DECISIONS.md.)
+// Fallback levy rate, used only before an expense date is chosen (so the preview
+// isn't blank). Once a date is entered the real effective-dated rate is fetched
+// from GET /claims/levy-rate and passed in — the preview then matches what the
+// server will store for any date. (See DECISIONS.md.)
 export const LEVY_RATE_PERCENT = 12.5;
 
 // Mirrors ClaimLineDto (api/src/claims/dto/create-claim.dto.ts). Numeric fields
@@ -34,8 +33,16 @@ export const emptyLine: ClaimLineInput = {
   isFuel: false,
 };
 
-/** Ex-GST totals for a set of form lines, via the shared computeTotals mirror. */
-export function previewTotals(lines: ClaimLineInput[]) {
+/**
+ * Ex-GST totals for a set of form lines, via the shared computeTotals mirror.
+ * `ratePercent` is the effective-dated levy rate for the claim's expense date
+ * (or the snapshotted rate when reopening); defaults to the current rate for the
+ * brief moment before a date has been resolved.
+ */
+export function previewTotals(
+  lines: ClaimLineInput[],
+  ratePercent: number | string = LEVY_RATE_PERCENT,
+) {
   return computeTotals(
     lines.map((l) => ({
       // Blank/half-typed rows coerce to 0 so the preview never throws mid-entry.
@@ -43,7 +50,7 @@ export function previewTotals(lines: ClaimLineInput[]) {
       unitPrice: Number(l?.unitPrice) || 0,
       isFuel: Boolean(l?.isFuel),
     })),
-    LEVY_RATE_PERCENT,
+    ratePercent,
   );
 }
 

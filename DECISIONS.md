@@ -33,7 +33,7 @@ prevents it, the starter bug it corresponds to, and the phase whose test demonst
 | 11 | State changes leave no trail; the burn dashboard is never told | `audit.record(…, tx)` on every transition, in the same transaction; `outbox.enqueue(tx, …)` **only** on final `APPROVED` | 7 | Phases 4, 6, 7 |
 | 12 | Unguarded routes — anyone can create or approve | `@UseGuards(PermissionsGuard)` on the controller, `@Permissions('claims.create')` / `('claims.approve')` per route | 10 | Phase 8 |
 | 13 | CSV import corrupts quoted values — `split(',')` breaks `"1,299.50"` into two fields | A real CSV parser; per-group best-effort so one bad line rejects only its own claim, with row numbers reported | — | Phase 9 |
-| 14 | The web preview total disagrees with the stored total | Share or exactly mirror `computeTotals`; the duplication, if any, is recorded here | 14* | Phase 12 |
+| 14 | The web preview total disagrees with the stored total | Exactly mirror `computeTotals`, **and** resolve the levy rate for the expense date via `GET /claims/levy-rate` so the rate matches too — not just the arithmetic | 14* | Phase 12 |
 | 15 | A corrected claim locks out its own approver — `@@unique([claimId, actorId])` means whoever rejected it can never rule on the fix | Scope the constraint to the revision being judged: `@@unique([claimId, revision, actorId])`; correcting a claim spends the old judgements and resets the keys | — | Phase 10 |
 
 Rows 3 and 9 are security defects rather than ordinary bugs, and are called out as such.
@@ -61,11 +61,6 @@ do, each a decision rather than an omission.
   checked against the user's real org. Fixing it properly *is* real auth, which is out of scope. Every claims
   query is still filtered by `orgId`, so the tenancy boundary holds within the module; I flagged this as the
   one place the stand-in is weaker than production would need (Phase 4 notes).
-- **No surcharge-rate lookup endpoint.** The web new-claim preview hardcodes the current 12.5% levy rate
-  rather than resolving the effective-dated rate per expense date, because no endpoint exposes `SurchargeRate`
-  and adding one to serve a *preview* is gold-plating. The server remains authoritative — the created claim is
-  always correct. The bounded consequence (a pre-2026 back-dated fuel expense previews at 12.5% vs the stored
-  10%) is documented in the Phase 12 notes. This is the only place the UI can disagree with the server.
 - **No CSV import *screen*.** The brief requires the import *endpoint* (built, Phase 9); a bulk-upload UI is
   not asked for, and the priority list explicitly permits skipping the screen. The endpoint is the deliverable.
 - **The list omits line items.** `GET /claims` returns references, totals and project, not the full line
@@ -280,18 +275,24 @@ both functions over the two goldens and a half-cent case and asserts identical o
 that check fails. This is risk 14 handled by *elimination* (the numbers are provably the same), with the
 duplication as the acknowledged cost.
 
-### The one honest gap: the levy rate is hardcoded at 12.5%
+### The levy rate is effective-dated in the preview too (risk 14 closed by elimination)
 
-The server resolves the rate by expense date (10% before 2026-01-01, 12.5% on/after) from `SurchargeRate`,
-which **no endpoint exposes**. The preview hardcodes the current 12.5% rather than adding a rate-lookup
-endpoint — a deliberate choice to keep this phase web-only. **Consequence:** a fuel expense back-dated before
-2026-01-01 previews at 12.5% while the server stores 10%. Every present-day claim (today is FY26) and both
-goldens match exactly, and the server is always authoritative — the *created* claim is correct regardless,
-because the server recomputes; only the pre-submit preview can drift, and only for historical fuel dates.
-The alternatives were weighed: a `GET /claims/levy-rate?date=` endpoint would close the gap for all dates
-(reusing `resolveLevyRate`), and mirroring the rate *table* client-side would match until a rate changes
-server-side and the copy goes stale — the worst option, since it duplicates the most volatile thing. The
-bounded, documented gap was chosen over both.
+The server resolves the rate by expense date (10% before 2026-01-01, 12.5% on/after) from `SurchargeRate`.
+The preview must show the same rate, so a small read-only endpoint — **`GET /claims/levy-rate?date=`** — exposes
+exactly what `create` resolves, reusing `resolveLevyRate`. The new-claim form watches the expense date and
+fetches the rate as it changes, so the preview matches the stored total for *any* date, not just today's.
+
+> **This phase originally hardcoded the preview at 12.5% and documented the drift as a bounded gap.** That was
+> the wrong call — a fuel expense back-dated before 2026-01-01 previewed at 12.5% while the server stored 10%,
+> which is a real "preview disagrees with the stored total" (risk 14, the thing this phase exists to prevent).
+> The endpoint closes it properly: verified live, `2025-12-31` previews **10% / $65.97** and `2026-02-10`
+> previews **12.5% / $67.47**, both equal to what the server stores.
+
+The rejected alternative — mirroring the rate *table* client-side — would match until a rate changed
+server-side and the copy went stale, duplicating the most volatile thing. The endpoint resolves against the
+live table instead. The **reopen** editor is the one place that does *not* fetch: reopening recomputes against
+the claim's **snapshotted** rate (the server uses `before.levyRatePercent`), so the reopen preview passes
+`claim.levyRatePercent` and stays faithful to that.
 
 ### Validation mirrors the DTO
 

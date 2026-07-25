@@ -18,6 +18,7 @@ export const queryKeys = {
     list: (page: number, filters?: Record<string, string | undefined>) =>
       ['claims', 'list', { page, ...filters }] as const,
     detail: (id: string) => ['claims', 'detail', id] as const,
+    levyRate: (date: string) => ['claims', 'levy-rate', date] as const,
   },
   notes: {
     forEntity: (entityType: string, entityId: string) => ['notes', entityType, entityId] as const,

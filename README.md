@@ -69,8 +69,9 @@ and only final approval — emits a `claim.approved` outbox event, which is what
 
 **Endpoints** (all under `/api`, enveloped): `POST /claims`, `GET /claims` (paginated, filter by `status` &
 `fy`), `GET /claims/:id` (with decision + audit history), `POST /claims/:id/submit | approve | reject |
-reopen`, and `POST /claims/import` (best-effort per-claim LegacyPlant CSV — valid claims created, invalid
-ones reported with row numbers, real quoted-comma parsing).
+reopen`, `POST /claims/import` (best-effort per-claim LegacyPlant CSV — valid claims created, invalid
+ones reported with row numbers, real quoted-comma parsing), and `GET /claims/levy-rate?date=` (the
+effective-dated rate for a date, so the new-claim preview matches the stored total).
 
 **Screens** (`web/app/claims`): a filterable, paginated **list** with inline lifecycle actions; a **new-claim
 form** with a live total that matches the server exactly; and a **claim detail** with the line items, the

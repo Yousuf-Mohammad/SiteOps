@@ -227,6 +227,26 @@ export class ClaimsService {
     };
   }
 
+  /**
+   * The levy rate in force on a date, for the acting org — the exact resolution
+   * `create` uses, exposed so the web preview can show the total the server will
+   * store instead of assuming the current rate. Read-only; no claim is touched.
+   */
+  async getLevyRate(orgId: string, date: string) {
+    if (!date) throw new BadRequestException('date query parameter is required');
+    const expenseDate = new Date(date);
+    if (Number.isNaN(expenseDate.getTime())) {
+      throw new BadRequestException(`Invalid date: ${date}`);
+    }
+    const rates = await this.prisma.surchargeRate.findMany({ where: { orgId } });
+    try {
+      return { date, ratePercent: resolveLevyRate(rates, expenseDate).toString() };
+    } catch (err) {
+      // No rate configured for that date is a client-visible configuration fault.
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
   /** A second, different approver is required above this ex-GST total. */
   private static readonly TWO_KEY_THRESHOLD = new Decimal('1000.00');
 

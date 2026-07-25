@@ -341,7 +341,9 @@ function ReopenEditor({ claim, onDone }: { claim: Claim; onDone: () => void }) {
       </p>
       <form className="form-grid" onSubmit={handleSubmit((v) => reopen.mutate(v))}>
         <ClaimLineFields control={control} register={register} errors={errors} />
-        <TotalPreview control={control} />
+        {/* Reopen recomputes against the claim's snapshotted rate, not a fresh
+            lookup — the preview uses the same value so it matches the server. */}
+        <TotalPreview control={control} ratePercent={claim.levyRatePercent} />
         {errors.lines?.message && <p style={{ color: 'var(--danger)' }}>{errors.lines.message}</p>}
         {errors.root && <p style={{ color: 'var(--danger)' }}>{errors.root.message}</p>}
         <div>
