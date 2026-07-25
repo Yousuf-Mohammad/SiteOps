@@ -143,30 +143,35 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
         <span className={`badge ${claim.status}`}>{claim.status.replace('_', ' ')}</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-        <div className="card">
-          <table>
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th className="num">Qty</th>
-                <th className="num">Unit price</th>
-                <th>Fuel</th>
-                <th className="num">Line total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {claim.lines.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.description}</td>
-                  <td className="num">{l.quantity}</td>
-                  <td className="num">{money(l.unitPrice)}</td>
-                  <td>{l.isFuel ? 'fuel' : ''}</td>
-                  <td className="num">{money(new Decimal(l.unitPrice).times(l.quantity))}</td>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, alignItems: 'start' }}>
+        {/* minWidth:0 lets this grid item shrink to its track; without it the table
+            forces the card wider than 2fr and the card's overflow:hidden clips a
+            column. The inner wrapper then scrolls the table instead of cutting it. */}
+        <div className="card" style={{ minWidth: 0 }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Description</th>
+                  <th className="num">Qty</th>
+                  <th className="num">Unit price</th>
+                  <th>Fuel</th>
+                  <th className="num">Line total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {claim.lines.map((l) => (
+                  <tr key={l.id}>
+                    <td>{l.description}</td>
+                    <td className="num">{l.quantity}</td>
+                    <td className="num">{money(l.unitPrice)}</td>
+                    <td>{l.isFuel ? 'fuel' : ''}</td>
+                    <td className="num">{money(new Decimal(l.unitPrice).times(l.quantity))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           <div style={{ padding: '12px 4px', display: 'grid', gap: 4, maxWidth: 320 }}>
             <div className="muted" style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -190,7 +195,7 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
           </div>
         </div>
 
-        <div className="card" style={{ padding: 16 }}>
+        <div className="card" style={{ padding: 16, minWidth: 0 }}>
           <h3 style={{ marginTop: 0 }}>History</h3>
           <ul className="timeline">
             {claim.audit.map((a) => (
