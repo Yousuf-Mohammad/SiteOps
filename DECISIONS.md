@@ -50,6 +50,34 @@ a git repository, so no commit was made. Recorded here so the gap is a decision,
 
 ---
 
+## What was deliberately skipped (and why)
+
+The brief asks for this explicitly. Scope was held to the claims module; these are the things I chose *not* to
+do, each a decision rather than an omission.
+
+- **No real auth, S3, email, or CRUD for the seeded orgs/users/projects/equipment.** The brief rules these out
+  and they're not what's being assessed. Fake-auth headers stand in for identity.
+- **The fake-auth middleware doesn't bind the user to the org** — `x-org-id` is caller-supplied and not
+  checked against the user's real org. Fixing it properly *is* real auth, which is out of scope. Every claims
+  query is still filtered by `orgId`, so the tenancy boundary holds within the module; I flagged this as the
+  one place the stand-in is weaker than production would need (Phase 4 notes).
+- **No surcharge-rate lookup endpoint.** The web new-claim preview hardcodes the current 12.5% levy rate
+  rather than resolving the effective-dated rate per expense date, because no endpoint exposes `SurchargeRate`
+  and adding one to serve a *preview* is gold-plating. The server remains authoritative — the created claim is
+  always correct. The bounded consequence (a pre-2026 back-dated fuel expense previews at 12.5% vs the stored
+  10%) is documented in the Phase 12 notes. This is the only place the UI can disagree with the server.
+- **No CSV import *screen*.** The brief requires the import *endpoint* (built, Phase 9); a bulk-upload UI is
+  not asked for, and the priority list explicitly permits skipping the screen. The endpoint is the deliverable.
+- **The list omits line items.** `GET /claims` returns references, totals and project, not the full line
+  arrays — the detail endpoint carries those. (It does now include a tiny `decisions` projection, added so the
+  list can gate its inline actions the same way the detail page does.)
+
+Note on what was *not* skipped: the rejected-claim **reopen** flow has both an API (Phase 10) and a UI (a
+correct-and-reopen editor on the detail page), so the ops lead's "they come back around" is answered end to
+end.
+
+---
+
 ## Phase 1 — Money (`claim-totals.ts`)
 
 Closes risk-log rows 2 and 6. New files: `api/src/claims/claim-totals.ts` + `claim-totals.spec.ts`.

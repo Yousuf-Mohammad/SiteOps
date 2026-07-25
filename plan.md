@@ -217,7 +217,7 @@ no outbox event. Exposed and closed **risk 15**: decision uniqueness moved to
 
 ---
 
-## Phase 14 — Docs & final verify
+## Phase 14 — Docs & final verify — ✅ DONE
 🎯 Ship-ready.
 ✏️ `DECISIONS.md` (money/rounding, collision-free refs, reproducibility/snapshot, concurrency, final-approval event, rejected-claims call, **what was skipped and why**). `AI-USAGE.md` (specific, with 1–2 real "AI got it wrong / here's how I caught it" examples). `README.md` claims section.
 ✅ **Gate — full suite green:** in `api/` run `npm test` (unit), `npm run test:e2e` (Postgres), `npm run lint`, `npm run typecheck`;
