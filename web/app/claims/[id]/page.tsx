@@ -96,9 +96,16 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
 
   const actingId = user?.id ?? '';
   const isSubmitter = actingId === claim.submitterId;
+  // A key is spent once turned: hide the buttons from an approver who has already
+  // decided THIS revision, rather than let them click into a server 409. Scoped
+  // to the revision so a reopened claim's old decision doesn't lock them out.
+  const alreadyDecided = claim.decisions.some(
+    (d) => d.revision === claim.revision && d.actorId === actingId,
+  );
   const canDecide =
     can('claims.approve') &&
     !isSubmitter &&
+    !alreadyDecided &&
     (claim.status === 'SUBMITTED' || claim.status === 'PARTIALLY_APPROVED');
   // Only the claim's own submitter lodges it, and only from DRAFT — mirrors the
   // server's ownership + state rule.
