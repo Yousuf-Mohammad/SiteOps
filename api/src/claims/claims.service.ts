@@ -500,8 +500,13 @@ export class ClaimsService {
    * Paginated, filterable list for the acting org.
    *
    * Line items are deliberately not included — the list shows references and
-   * totals, and fanning out a join per row costs more than it returns. The
+   * totals, and fanning out a line join per row costs more than it returns. The
    * detail endpoint carries them.
+   *
+   * `decisions` *is* included, but only its `actorId`/`revision` — a couple of
+   * tiny rows per claim, not the line fan-out. The list offers the same
+   * approve/reject actions as the detail page, and hiding a spent key needs to
+   * know who has already decided the current revision.
    */
   async list(orgId: string, query: ListClaimsDto) {
     const where = {
@@ -515,7 +520,10 @@ export class ClaimsService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.claim.findMany({
         where,
-        include: { project: { select: { code: true, name: true } } },
+        include: {
+          project: { select: { code: true, name: true } },
+          decisions: { select: { actorId: true, revision: true } },
+        },
         // The id tiebreak keeps paging stable: without it, claims sharing an
         // expenseDate can reorder between requests, so a row is seen twice or
         // skipped entirely.
