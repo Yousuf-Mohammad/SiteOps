@@ -136,6 +136,10 @@ select, input {
 
 .form-grid { display: grid; gap: 12px; max-width: 640px; }
 .line-row { display: grid; grid-template-columns: 1fr 90px 120px 60px 36px; gap: 8px; align-items: center; }
+/* Each input is wrapped in a div (to hold its error), so it no longer stretches
+   to its grid track on its own — pin it to the cell width or a number input
+   keeps its ~170px browser default and overflows the 90px Qty column. */
+.line-row > div input { width: 100%; }
 .total-preview { font-size: 16px; font-weight: 700; padding: 12px 0; }
 
 .timeline { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--border); }
